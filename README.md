@@ -76,8 +76,6 @@ unreleased material, and **it does send audio to a third-party server**, which b
 `A.getStream()` exposes the live capture so a recogniser can grab a snippet from the existing
 stream rather than opening a second microphone.
 
-### A route that no longer exists
-
 ## What is actually possible, per platform
 
 The visuals are the easy part. The only hard question is **how you get at the audio**, and the
@@ -101,7 +99,7 @@ turns out to be a feature — it reacts to any sound in the room, not just this 
 1. **Disable the browser's speech processing on the mic.** `echoCancellation`,
    `noiseSuppression`, and `autoGainControl` all default to on, and they are tuned for voice
    calls — they treat music as echo and actively cancel it. Left on, the visualizer barely
-   twitches. All three are explicitly off in `index.html`.
+   twitches. All three are explicitly off in `audio.js`.
 
 2. **Auto-gain the analysis, not the audio.** Each frequency band is normalised against a
    slowly-decaying running peak, so a quiet phone speaker and a loud PA both drive the visuals
