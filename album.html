@@ -486,7 +486,11 @@ async function begin(kind) {
   catch (e) {
     const n = e && e.name;
     if (e && e.message === 'NO_AUDIO_TRACK') errEl.textContent = 'No audio came through. Re-open the picker and tick “share audio” before confirming.';
-    else if (n === 'NotAllowedError' || n === 'SecurityError') errEl.textContent = 'Permission denied. Allow access and try again.';
+    else if (n === 'NotAllowedError' || n === 'SecurityError') errEl.textContent = 'Permission denied. Allow access and try again.' +
+      // Embedded pages are usually denied the microphone by the host
+      // frame's permissions policy, and the error is indistinguishable
+      // from the user clicking Block.
+      (window.self !== window.top ? ' If this page is embedded, open it in its own browser tab — embedded pages are often blocked from using the microphone.' : '');
     else if (n === 'NotFoundError' || n === 'NotSupportedError' || n === 'TypeError') errEl.textContent = 'This browser can’t capture that source. Try the microphone.';
     else errEl.textContent = 'Couldn’t start audio: ' + (e && e.message ? e.message : 'unknown');
     return;

@@ -381,7 +381,8 @@ async function begin(kind) {
     if (e && e.message === 'NO_AUDIO_TRACK') {
       errEl.textContent = 'No audio came through. Re-open the picker and tick the “Share tab audio” / “Share system audio” checkbox before confirming.';
     } else if (n === 'NotAllowedError' || n === 'SecurityError') {
-      errEl.textContent = 'Permission denied. Allow access, then try again.';
+      errEl.textContent = 'Permission denied. Allow access, then try again.' +
+      (window.self !== window.top ? ' If this page is embedded, open it in its own browser tab — embedded pages are often blocked from using the microphone.' : '');
     } else if (n === 'NotFoundError' || n === 'NotSupportedError' || n === 'TypeError') {
       errEl.textContent = 'This browser can’t capture that source. Try the microphone option instead.';
     } else {
