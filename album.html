@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Resonate — ambient album art</title>
+<style>
+  :root{
+    --ui: rgba(255,255,255,.92);
+    --dim: rgba(255,255,255,.45);
+    --line: rgba(255,255,255,.14);
+    --panel: rgba(12,12,16,.72);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; margin:0; background:#000; overflow:hidden; }
+  body{
+    font: 400 15px/1.5 ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    color: var(--ui); overscroll-behavior:none; touch-action:manipulation;
+  }
+  canvas#c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  #gate{
+    position:fixed; inset:0; z-index:30;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:24px; padding:32px 24px; text-align:center;
+    background: radial-gradient(120% 90% at 50% 12%, #171726 0%, #06060a 55%, #000 100%);
+    transition: opacity .55s ease, visibility .55s;
+  }
+  #gate.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
+  .mark{
+    width:64px; height:64px; border-radius:18px;
+    background: conic-gradient(from 20deg, #6ee7ff, #a78bfa, #fb7185, #fbbf24, #6ee7ff);
+    animation: spin 11s linear infinite; box-shadow:0 0 60px rgba(139,124,246,.4);
+  }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+  h1{ font-size:26px; font-weight:600; letter-spacing:-.02em; margin:0; }
+  .sub{ color:var(--dim); max-width:36ch; margin:-12px 0 0; font-size:14.5px; }
+  .choices{ display:flex; flex-direction:column; gap:10px; width:min(360px,100%); }
+  button.src{
+    appearance:none; cursor:pointer; text-align:left; display:flex; align-items:center; gap:14px;
+    padding:14px 16px; border-radius:14px; border:1px solid var(--line);
+    background:rgba(255,255,255,.045); color:var(--ui); font:inherit;
+    transition: background .18s, border-color .18s, transform .12s;
+  }
+  button.src:hover{ background:rgba(255,255,255,.09); border-color:rgba(255,255,255,.3); }
+  button.src:active{ transform:scale(.985); }
+  button.src[disabled]{ opacity:.34; cursor:not-allowed; }
+  .ico{ font-size:20px; width:24px; text-align:center; flex:none; }
+  .txt b{ display:block; font-weight:550; font-size:15px; }
+  .txt span{ display:block; color:var(--dim); font-size:12.5px; line-height:1.4; margin-top:2px; }
+  #err{ color:#fda4af; font-size:13px; min-height:1em; max-width:40ch; margin:0; }
+  .note{ color:rgba(255,255,255,.3); font-size:12px; max-width:40ch; margin:0; }
+
+  /* now-playing card */
+  #np{
+    position:fixed; z-index:15; left:0; right:0; bottom:74px;
+    display:flex; align-items:center; gap:15px; justify-content:center;
+    opacity:0; transform:translateY(8px); transition:opacity .8s ease, transform .8s ease;
+    pointer-events:none; padding:0 20px;
+  }
+  #np.show{ opacity:1; transform:none; }
+  #np img{
+    width:62px; height:62px; border-radius:10px; object-fit:cover; flex:none;
+    box-shadow:0 12px 40px rgba(0,0,0,.6); background:#222;
+  }
+  #np .meta{ text-align:left; min-width:0; }
+  #np .t{ font-size:16px; font-weight:600; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #np .a{ font-size:13.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  #hud{
+    position:fixed; z-index:20; left:14px; right:14px; bottom:14px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    opacity:0; transition:opacity .45s ease; pointer-events:none;
+  }
+  #hud.show{ opacity:1; pointer-events:auto; }
+  .chip{
+    appearance:none; cursor:pointer; padding:9px 14px; border-radius:999px;
+    border:1px solid var(--line); background:var(--panel);
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    color:var(--ui); font:inherit; font-size:13px; transition:background .16s;
+  }
+  .chip:hover{ background:rgba(40,40,52,.85); }
+  .spacer{ flex:1 1 auto; }
+  #swatches{ display:flex; gap:4px; align-items:center; }
+  #swatches i{ width:15px; height:15px; border-radius:4px; display:block; box-shadow:0 0 0 1px rgba(255,255,255,.15) inset; }
+
+  #drop{
+    position:fixed; inset:0; z-index:40; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(5,5,10,.86); backdrop-filter:blur(8px);
+    font-size:19px; letter-spacing:-.01em;
+  }
+  #drop.on{ display:flex; }
+  #drop div{ border:2px dashed rgba(255,255,255,.4); border-radius:20px; padding:44px 60px; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="np"><img id="np-art" alt=""><div class="meta"><div class="t" id="np-t"></div><div class="a" id="np-a"></div></div></div>
+
+<div id="gate">
+  <div class="mark"></div>
+  <h1>Ambient album art</h1>
+  <p class="sub">Artwork dissolved into drifting colour fields that breathe with the music. Pick where the sound comes from.</p>
+  <div class="choices">
+    <button class="src" id="btn-mic"><span class="ico">🎙️</span><span class="txt"><b>Microphone</b><span>Play music out loud from anything. Works on phone and desktop.</span></span></button>
+    <button class="src" id="btn-tab"><span class="ico">🖥️</span><span class="txt"><b>This device's audio</b><span>Desktop Chrome or Edge. Tick “share audio” in the picker.</span></span></button>
+    <button class="src" id="btn-demo"><span class="ico">✳️</span><span class="txt"><b>Demo tone</b><span>No permissions needed.</span></span></button>
+  </div>
+  <p id="err"></p>
+  <p class="note">Drop an image on the page at any time to use it as the artwork.</p>
+</div>
+
+<div id="hud">
+  <button class="chip" id="art">Artwork…</button>
+  <button class="chip" id="look">Drift</button>
+  <button class="chip" id="full">Fullscreen</button>
+  <span class="spacer"></span>
+  <span id="swatches"></span>
+  <button class="chip" id="restart">Change source</button>
+</div>
+
+<div id="drop"><div>Drop artwork to use it</div></div>
+<input type="file" id="file" accept="image/*" hidden>
+
+<script src="audio.js"></script>
+<script>
+"use strict";
+
+/* =====================================================================
+   ARTWORK  —  palette extraction
+   ===================================================================== */
+const ART = {
+  img: null, palette: [], raw: [], dark: '#07070b', ready: false,
+  title: '', artist: ''
+};
+
+/* Colours sampled off a cover are usually far too dark to work as light —
+   averaging a gradient-heavy image pulls everything toward the background.
+   Push each one into a vivid band so the blobs actually glow, while keeping
+   its hue, which is what makes the result still feel like the album. */
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r)      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (mx === g) h = ((b - r) / d + 2) / 6;
+    else               h = ((r - g) / d + 4) / 6;
+  }
+  const l = (mx + mn) / 2;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  return [h, s, l];
+}
+function hslToRgb(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h * 6) % 2 - 1));
+  const m = l - c / 2;
+  const t = h * 6;
+  let r = 0, g = 0, b = 0;
+  if (t < 1)      [r, g, b] = [c, x, 0];
+  else if (t < 2) [r, g, b] = [x, c, 0];
+  else if (t < 3) [r, g, b] = [0, c, x];
+  else if (t < 4) [r, g, b] = [0, x, c];
+  else if (t < 5) [r, g, b] = [x, 0, c];
+  else            [r, g, b] = [c, 0, x];
+  return [(r + m) * 255 | 0, (g + m) * 255 | 0, (b + m) * 255 | 0];
+}
+function vivify([r, g, b]) {
+  let [h, s, l] = rgbToHsl(r, g, b);
+  // A near-neutral has no meaningful hue — whatever tiny channel imbalance
+  // it has is noise, and saturating it invents a colour that was never on
+  // the cover. Greys stay grey; only lightness is normalised.
+  if (s < 0.12) return hslToRgb(h, s, 0.42 + l * 0.26);
+  s = Math.min(1, Math.max(s, 0.5) * 1.2);
+  l = 0.44 + l * 0.26;              // compress into 0.44 – 0.70
+  return hslToRgb(h, s, l);
+}
+
+// Median-cut is overkill here. Quantise into coarse buckets, take the most
+// populous, then greedily reject anything too close to a colour already
+// chosen — that rejection step is what stops a photo returning five
+// near-identical browns.
+function extractPalette(img, count = 5) {
+  const S = 56;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const x = cv.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0, S, S);
+
+  let data;
+  try {
+    data = x.getImageData(0, 0, S, S).data;
+  } catch (e) {
+    // Tainted canvas: a cross-origin image without CORS headers.
+    throw new Error('TAINTED');
+  }
+
+  const buckets = new Map();
+  let rs = 0, gs = 0, bs = 0, n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    rs += r; gs += g; bs += b; n++;
+    const key = (r >> 4) << 8 | (g >> 4) << 4 | (b >> 4);
+    const e = buckets.get(key);
+    if (e) { e.r += r; e.g += g; e.b += b; e.n++; }
+    else buckets.set(key, { r, g, b, n: 1 });
+  }
+  if (!n) throw new Error('EMPTY');
+
+  const all = [...buckets.values()]
+    .map(e => ({ r: e.r / e.n, g: e.g / e.n, b: e.b / e.n, n: e.n }))
+    // Weight by colourfulness so a dominant grey background doesn't win
+    // every slot on an otherwise vivid cover.
+    .map(c => {
+      const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
+      const sat = mx === 0 ? 0 : (mx - mn) / mx;
+      return { ...c, score: c.n * (0.35 + sat * 1.5) };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const picked = [];
+  const dist2 = (a, b) => (a.r-b.r)**2 + (a.g-b.g)**2 + (a.b-b.b)**2;
+  for (const c of all) {
+    if (picked.length >= count) break;
+    if (picked.every(p => dist2(p, c) > 2100)) picked.push(c);
+  }
+  // Relax the spacing rule if the cover genuinely is near-monochrome.
+  for (const c of all) { if (picked.length >= count) break; if (!picked.includes(c)) picked.push(c); }
+
+  const avg = { r: rs / n, g: gs / n, b: bs / n };
+  return {
+    palette: picked.slice(0, count).map(c => [c.r | 0, c.g | 0, c.b | 0]),
+    dark: `rgb(${avg.r * 0.13 | 0},${avg.g * 0.13 | 0},${avg.b * 0.15 | 0})`
+  };
+}
+
+function applyArtwork(img, title = '', artist = '') {
+  const { palette, dark } = extractPalette(img);
+  ART.img = img;
+  ART.raw = palette;                    // true album colours, shown as swatches
+  ART.palette = palette.map(vivify);    // brightened, used to paint
+  ART.dark = dark;
+  ART.title = title; ART.artist = artist; ART.ready = true;
+  renderTiny();
+  seedBlobs();
+  paintSwatches();
+
+  const np = document.getElementById('np');
+  if (title || artist) {
+    document.getElementById('np-art').src = img.src;
+    document.getElementById('np-t').textContent = title;
+    document.getElementById('np-a').textContent = artist;
+    np.classList.add('show');
+    clearTimeout(applyArtwork._t);
+    applyArtwork._t = setTimeout(() => np.classList.remove('show'), 8000);
+  } else np.classList.remove('show');
+}
+
+function loadImage(src, crossOrigin) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    if (crossOrigin) im.crossOrigin = 'anonymous';
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error('LOAD_FAILED'));
+    im.src = src;
+  });
+}
+
+/* A stand-in cover so the page does something on first open. */
+function sampleArtwork() {
+  const s = 600, cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  const x = cv.getContext('2d');
+  const bg = x.createLinearGradient(0, 0, s, s);
+  bg.addColorStop(0, '#1b1035'); bg.addColorStop(1, '#3d1220');
+  x.fillStyle = bg; x.fillRect(0, 0, s, s);
+  const blobs = [
+    ['#ff5c7a', .30, .32, .30], ['#ffd166', .70, .28, .22],
+    ['#5ce1e6', .34, .72, .26], ['#8b5cf6', .74, .70, .28]
+  ];
+  for (const [col, cx, cy, r] of blobs) {
+    const gr = x.createRadialGradient(cx*s, cy*s, 0, cx*s, cy*s, r*s);
+    gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, s, s);
+  }
+  x.globalCompositeOperation = 'overlay';
+  x.fillStyle = '#fff';
+  x.beginPath(); x.arc(s*.5, s*.52, s*.19, 0, Math.PI*2); x.fill();
+  return loadImage(cv.toDataURL());
+}
+
+/* =====================================================================
+   RENDER
+   The whole scene is drawn into a tiny offscreen buffer and then scaled
+   up to the display with smoothing. That upscale IS the abstraction — it
+   melts the artwork into soft gradient fields for free, and costs a
+   fraction of a real blur filter.
+   ===================================================================== */
+const cv = document.getElementById('c');
+const g  = cv.getContext('2d', { alpha: false });
+const LO = document.createElement('canvas');
+const lg = LO.getContext('2d');
+
+/* The artwork is first crushed to a handful of pixels, and that is what
+   gets painted underneath. Drawing the cover itself — even small and
+   blurred — just looks like a blurred cover; at this size only the broad
+   composition and colour placement survive, which is the part worth
+   keeping. TINY_W sets how abstract the result is. */
+const TINY = document.createElement('canvas');
+const tg = TINY.getContext('2d');
+const TINY_W = 7;
+
+let W = 0, H = 0, DPR = 1, LOW = 132;
+
+function renderTiny() {
+  if (!ART.img) return;
+  const ar = LO.height / Math.max(1, LO.width);
+  TINY.width = TINY_W;
+  TINY.height = Math.max(3, Math.round(TINY_W * ar));
+  const s = Math.max(TINY.width / ART.img.width, TINY.height / ART.img.height);
+  const dw = ART.img.width * s, dh = ART.img.height * s;
+  tg.clearRect(0, 0, TINY.width, TINY.height);
+  tg.drawImage(ART.img, (TINY.width - dw) / 2, (TINY.height - dh) / 2, dw, dh);
+}
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  const ar = H / W;
+  LO.width = LOW; LO.height = Math.max(8, Math.round(LOW * ar));
+  renderTiny();
+  seedBlobs();
+}
+addEventListener('resize', resize);
+addEventListener('orientationchange', () => setTimeout(resize, 250));
+
+const LOOKS = ['Drift', 'Pulse', 'Bloom'];
+let look = 0, time = 0;
+
+let blobs = [];
+function seedBlobs() {
+  const n = 7;
+  blobs = [];
+  const GOLD = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i++) {
+    blobs.push({
+      ci: i % Math.max(1, ART.palette.length),
+      // Golden-angle seeding spreads the starting points evenly instead of
+      // letting Math.random() clump them.
+      px: 0.5 + Math.cos(i * GOLD) * (0.14 + (i % 3) * 0.13),
+      py: 0.5 + Math.sin(i * GOLD) * (0.14 + (i % 3) * 0.13),
+      sx: 0.06 + Math.random() * 0.13,
+      sy: 0.05 + Math.random() * 0.13,
+      fx: 0.07 + Math.random() * 0.16,
+      fy: 0.06 + Math.random() * 0.15,
+      ph: Math.random() * 6.28,
+      r:  0.26 + Math.random() * 0.26,
+      band: i % 5
+    });
+  }
+}
+
+const bandVal = i => [A.bass, A.mid, A.high, A.air, A.level][i] || 0;
+
+function drawScene(dt) {
+  const w = LO.width, h = LO.height;
+
+  lg.globalCompositeOperation = 'source-over';
+  lg.fillStyle = ART.dark;
+  lg.fillRect(0, 0, w, h);
+
+  // Base wash: the crushed artwork, upscaled and drifting. Overscanned so
+  // the smeared edge pixels stay off-screen.
+  if (ART.img && TINY.width) {
+    const zoom = 1.5 + A.bass * 0.12;
+    const dw = w * zoom, dh = h * zoom;
+    lg.globalAlpha = 0.8;
+    lg.drawImage(TINY,
+      (w - dw) / 2 + Math.sin(time * 0.11) * w * 0.05,
+      (h - dh) / 2 + Math.cos(time * 0.09) * h * 0.05, dw, dh);
+    lg.globalAlpha = 1;
+  }
+
+  const P = ART.palette.length ? ART.palette : [[120,120,140]];
+  const pulse = look === 1 ? 1 : 0.45;
+  lg.globalCompositeOperation = look === 2 ? 'lighter' : 'source-over';
+
+  for (const b of blobs) {
+    const e = bandVal(b.band);
+    const x = (b.px + Math.sin(time * b.fx + b.ph) * b.sx) * w;
+    const y = (b.py + Math.cos(time * b.fy + b.ph * 1.7) * b.sy) * h;
+    const rad = b.r * Math.min(w, h) * (0.62 + e * 0.55 * pulse + A.beat * 0.16 * pulse);
+    if (rad <= 0.5) continue;
+
+    const [r, gg, bb] = P[b.ci % P.length];
+    const gr = lg.createRadialGradient(x, y, 0, x, y, rad);
+    const a = (look === 2 ? 0.34 : 0.5) * (0.45 + e * 0.55);
+    gr.addColorStop(0,   `rgba(${r},${gg},${bb},${a})`);
+    gr.addColorStop(0.55,`rgba(${r},${gg},${bb},${a * 0.42})`);
+    gr.addColorStop(1,   `rgba(${r},${gg},${bb},0)`);
+    lg.fillStyle = gr;
+    lg.beginPath(); lg.arc(x, y, rad, 0, Math.PI * 2); lg.fill();
+  }
+  lg.globalCompositeOperation = 'source-over';
+
+  // Upscale — the abstraction step.
+  g.drawImage(LO, 0, 0, w, h, 0, 0, W, H);
+
+  // Vignette, at full resolution so it stays clean.
+  const vg = g.createRadialGradient(W/2, H/2, Math.min(W,H) * 0.3, W/2, H/2, Math.max(W,H) * 0.78);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, `rgba(0,0,0,${0.55 - A.level * 0.16})`);
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+}
+
+/* A little grain, rendered once and tiled — upscaled gradients band badly
+   on dark screens without it. */
+const GRAIN = (() => {
+  const s = 128, c = document.createElement('canvas');
+  c.width = c.height = s;
+  const x = c.getContext('2d'), d = x.createImageData(s, s);
+  for (let i = 0; i < d.data.length; i += 4) {
+    const v = 118 + Math.random() * 20;
+    d.data[i] = d.data[i+1] = d.data[i+2] = v; d.data[i+3] = 255;
+  }
+  x.putImageData(d, 0, 0);
+  return c;
+})();
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now; time += dt;
+  A.update(dt);
+  drawScene(dt);
+
+  g.globalCompositeOperation = 'overlay';
+  g.globalAlpha = 0.035;
+  for (let y = 0; y < H; y += 128) for (let x = 0; x < W; x += 128) g.drawImage(GRAIN, x, y);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'source-over';
+
+  requestAnimationFrame(frame);
+}
+
+/* =====================================================================
+   NOW-PLAYING SEAM
+   Recognition is deliberately not wired up — see README for why and what
+   each option costs. Anything that can produce a title, artist and image
+   URL only has to call setNowPlaying() and the visuals follow.
+   ===================================================================== */
+async function setNowPlaying({ title, artist, artworkUrl }) {
+  const img = await loadImage(artworkUrl, true);   // needs CORS headers
+  applyArtwork(img, title, artist);
+}
+window.setNowPlaying = setNowPlaying;
+
+/* =====================================================================
+   UI
+   ===================================================================== */
+const gate = document.getElementById('gate');
+const hud  = document.getElementById('hud');
+const errEl = document.getElementById('err');
+
+function paintSwatches() {
+  const el = document.getElementById('swatches');
+  el.innerHTML = '';
+  for (const [r, g2, b] of ART.raw) {
+    const i = document.createElement('i');
+    i.style.background = `rgb(${r},${g2},${b})`;
+    el.appendChild(i);
+  }
+}
+
+async function begin(kind) {
+  errEl.textContent = '';
+  try { await A.start(kind); }
+  catch (e) {
+    const n = e && e.name;
+    if (e && e.message === 'NO_AUDIO_TRACK') errEl.textContent = 'No audio came through. Re-open the picker and tick “share audio” before confirming.';
+    else if (n === 'NotAllowedError' || n === 'SecurityError') errEl.textContent = 'Permission denied. Allow access and try again.';
+    else if (n === 'NotFoundError' || n === 'NotSupportedError' || n === 'TypeError') errEl.textContent = 'This browser can’t capture that source. Try the microphone.';
+    else errEl.textContent = 'Couldn’t start audio: ' + (e && e.message ? e.message : 'unknown');
+    return;
+  }
+  gate.classList.add('hidden');
+  hud.classList.add('show');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => hud.classList.remove('show'), 5000);
+}
+document.getElementById('btn-mic').onclick  = () => begin('mic');
+document.getElementById('btn-tab').onclick  = () => begin('tab');
+document.getElementById('btn-demo').onclick = () => begin('demo');
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (isIOS || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+  const b = document.getElementById('btn-tab');
+  b.disabled = true;
+  b.querySelector('.txt span').textContent = 'Not available on this device — iOS can’t expose other apps’ audio. Use the microphone.';
+}
+
+// --- artwork input: file picker, drag-drop, or a pasted URL -----------
+const fileInput = document.getElementById('file');
+document.getElementById('art').onclick = () => fileInput.click();
+fileInput.onchange = () => { if (fileInput.files[0]) readFile(fileInput.files[0]); };
+
+function readFile(file) {
+  const fr = new FileReader();
+  // Read to a data URL rather than an object URL: data URLs are same-origin
+  // so the canvas stays readable for palette extraction, even from file://.
+  fr.onload = async () => {
+    try { applyArtwork(await loadImage(fr.result), file.name.replace(/\.[^.]+$/, ''), ''); }
+    catch (e) { flash('Could not read that image.'); }
+  };
+  fr.readAsDataURL(file);
+}
+
+const dropEl = document.getElementById('drop');
+let dragDepth = 0;
+addEventListener('dragenter', e => { e.preventDefault(); if (++dragDepth === 1) dropEl.classList.add('on'); });
+addEventListener('dragleave', e => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; dropEl.classList.remove('on'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  e.preventDefault(); dragDepth = 0; dropEl.classList.remove('on');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) return readFile(f);
+  const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+  if (url) tryUrl(url.trim());
+});
+addEventListener('paste', e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (item) return readFile(item.getAsFile());
+  const t = e.clipboardData?.getData('text');
+  if (t && /^https?:\/\//.test(t.trim())) tryUrl(t.trim());
+});
+
+async function tryUrl(url) {
+  try {
+    applyArtwork(await loadImage(url, true), '', '');
+  } catch (e) {
+    flash(e.message === 'TAINTED'
+      ? 'That image host doesn’t allow cross-origin reads, so its colours can’t be sampled. Save it and drop the file instead.'
+      : 'Couldn’t load that image URL.');
+  }
+}
+
+let flashT;
+function flash(msg) {
+  const n = document.getElementById('np');
+  document.getElementById('np-t').textContent = msg;
+  document.getElementById('np-a').textContent = '';
+  document.getElementById('np-art').removeAttribute('src');
+  n.classList.add('show');
+  clearTimeout(flashT);
+  flashT = setTimeout(() => n.classList.remove('show'), 5200);
+}
+
+document.getElementById('look').onclick = e => {
+  look = (look + 1) % LOOKS.length;
+  e.target.textContent = LOOKS[look];
+};
+document.getElementById('full').onclick = () => {
+  if (!document.fullscreenElement) (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
+  else document.exitFullscreen();
+};
+document.getElementById('restart').onclick = () => {
+  A.stop(); hud.classList.remove('show'); gate.classList.remove('hidden');
+};
+
+let hideTimer;
+function poke() {
+  if (gate.classList.contains('hidden')) {
+    hud.classList.add('show');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => hud.classList.remove('show'), 3200);
+  }
+}
+['pointermove','pointerdown','keydown'].forEach(ev => addEventListener(ev, poke));
+addEventListener('keydown', e => {
+  if (!gate.classList.contains('hidden')) return;
+  if (e.key === ' ') { e.preventDefault(); document.getElementById('look').click(); }
+  if (e.key.toLowerCase() === 'f') document.getElementById('full').click();
+});
+
+// --- boot -------------------------------------------------------------
+(async () => {
+  resize();
+  try { applyArtwork(await sampleArtwork()); } catch (e) { /* visuals still run */ }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

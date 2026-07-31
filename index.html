@@ -139,223 +139,12 @@
   <button class="chip" id="restart">Change source</button>
 </div>
 
+<script src="audio.js"></script>
 <script>
 "use strict";
 
 /* =====================================================================
-   1. AUDIO ENGINE
-   Everything downstream reads from `A`: level, bass/mid/high/air,
-   beat pulses, spectral centroid, and the raw spectrum array.
-   ===================================================================== */
-const A = {
-  ctx: null, analyser: null, stream: null, osc: null,
-  freq: null, wave: null, binHz: 0,
-  bass: 0, mid: 0, high: 0, air: 0, level: 0,
-  centroid: 0.5,          // 0..1, "brightness" of the sound
-  beat: 0,                // decays 1 -> 0 after each detected onset
-  beatFlash: 0,
-  bpm: 0,
-  ready: false, silentFor: 0,
-
-  _hist: [], _lastBeat: 0, _beatTimes: [],
-  _peak: { bass:.01, mid:.01, high:.01, air:.01, level:.01 },
-
-  async start(kind) {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    this.ctx = new Ctx();
-    await this.ctx.resume();
-
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 2048;
-    this.analyser.smoothingTimeConstant = 0.72;
-    this.analyser.minDecibels = -95;
-    this.analyser.maxDecibels = -12;
-
-    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
-    this.wave = new Uint8Array(this.analyser.frequencyBinCount);
-    this.binHz = this.ctx.sampleRate / 2 / this.analyser.frequencyBinCount;
-
-    let node;
-    if (kind === 'mic') {
-      // These three flags matter enormously. Browsers default to speech
-      // processing, which actively fights music: it treats the song as
-      // "echo" and cancels it out. Turning them off is what makes a
-      // microphone usable as a music input.
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1
-        }
-      });
-      node = this.ctx.createMediaStreamSource(this.stream);
-
-    } else if (kind === 'tab') {
-      // video:true is required — Chrome will not hand over audio for an
-      // audio-only display capture request.
-      this.stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: 1, height: 1, frameRate: 1 },
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
-        },
-        systemAudio: 'include',
-        selfBrowserSurface: 'exclude'
-      });
-      if (this.stream.getAudioTracks().length === 0) {
-        this.stream.getTracks().forEach(t => t.stop());
-        throw new Error('NO_AUDIO_TRACK');
-      }
-      this.stream.getVideoTracks().forEach(t => t.stop()); // drop the pixels, keep the sound
-      node = this.ctx.createMediaStreamSource(this.stream);
-
-    } else {
-      node = this._demoSource();
-    }
-
-    node.connect(this.analyser);
-    this.ready = true;
-  },
-
-  // A small self-contained musical phrase so the visuals can be judged
-  // without granting any permissions.
-  _demoSource() {
-    const out = this.ctx.createGain();
-    out.gain.value = 0.9;
-    const bus = this.ctx.createGain();
-    bus.connect(out);
-
-    const scale = [0, 3, 5, 7, 10, 12, 15];
-    const root = 110;
-    let step = 0;
-    const tick = () => {
-      if (!this.ctx || this.ctx.state === 'closed') return;
-      const t = this.ctx.currentTime;
-      const kick = step % 4 === 0;
-
-      // kick drum
-      if (kick) {
-        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-        o.frequency.setValueAtTime(150, t);
-        o.frequency.exponentialRampToValueAtTime(42, t + 0.13);
-        g.gain.setValueAtTime(1.0, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-        o.connect(g).connect(bus); o.start(t); o.stop(t + 0.32);
-      }
-      // hat
-      if (step % 2 === 1) {
-        const buf = this.ctx.createBuffer(1, 2048, this.ctx.sampleRate);
-        const d = buf.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
-        const s = this.ctx.createBufferSource(); s.buffer = buf;
-        const hp = this.ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
-        const g = this.ctx.createGain(); g.gain.value = 0.22;
-        s.connect(hp).connect(g).connect(bus); s.start(t);
-      }
-      // melody
-      const n = scale[(step * 3) % scale.length] + (step % 8 < 4 ? 0 : 5);
-      const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-      o.type = 'sawtooth';
-      o.frequency.value = root * Math.pow(2, n / 12) * 2;
-      const lp = this.ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.setValueAtTime(2400, t);
-      lp.frequency.exponentialRampToValueAtTime(500, t + 0.4);
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
-      o.connect(lp).connect(g).connect(bus); o.start(t); o.stop(t + 0.45);
-
-      step++;
-      this.osc = setTimeout(tick, 250); // 120 bpm, eighth notes
-    };
-    tick();
-    return out;
-  },
-
-  _band(loHz, hiHz) {
-    const lo = Math.max(0, Math.floor(loHz / this.binHz));
-    const hi = Math.min(this.freq.length - 1, Math.ceil(hiHz / this.binHz));
-    let sum = 0;
-    for (let i = lo; i <= hi; i++) sum += this.freq[i];
-    return sum / ((hi - lo + 1) * 255);
-  },
-
-  // Auto-gain: track a slowly-decaying peak per band and normalise against
-  // it. This is why quiet phone speakers and loud PA systems both look
-  // right without the user touching a sensitivity slider.
-  _norm(key, raw) {
-    const p = this._peak;
-    p[key] = Math.max(raw, p[key] * 0.9985);
-    if (p[key] < 0.008) p[key] = 0.008;
-    return Math.min(1, raw / p[key]);
-  },
-
-  update(dt) {
-    if (!this.ready) return;
-    this.analyser.getByteFrequencyData(this.freq);
-    this.analyser.getByteTimeDomainData(this.wave);
-
-    const rawBass = this._band(30, 150);
-    const rawMid  = this._band(150, 1200);
-    const rawHigh = this._band(1200, 5000);
-    const rawAir  = this._band(5000, 14000);
-    const rawLvl  = (rawBass + rawMid + rawHigh + rawAir) / 4;
-
-    this.bass  = this._norm('bass',  rawBass);
-    this.mid   = this._norm('mid',   rawMid);
-    this.high  = this._norm('high',  rawHigh);
-    this.air   = this._norm('air',   rawAir);
-    this.level = this._norm('level', rawLvl);
-
-    this.silentFor = rawLvl < 0.004 ? this.silentFor + dt : 0;
-
-    // Spectral centroid — the "centre of mass" of the spectrum. Bright,
-    // cymbal-heavy passages push it up; bassy passages pull it down.
-    let num = 0, den = 0;
-    for (let i = 0; i < this.freq.length; i++) { num += i * this.freq[i]; den += this.freq[i]; }
-    const c = den > 0 ? (num / den) / this.freq.length : 0.25;
-    this.centroid += (Math.min(1, c * 3.2) - this.centroid) * 0.06;
-
-    // Onset detection on the low band against a rolling local average.
-    this._hist.push(rawBass);
-    if (this._hist.length > 60) this._hist.shift();
-    const avg = this._hist.reduce((a, b) => a + b, 0) / this._hist.length;
-    const now = performance.now();
-    if (rawBass > avg * 1.38 && rawBass > 0.045 && now - this._lastBeat > 190) {
-      this._lastBeat = now;
-      this.beat = 1;
-      this.beatFlash = 1;
-      this._beatTimes.push(now);
-      if (this._beatTimes.length > 12) this._beatTimes.shift();
-      if (this._beatTimes.length > 4) {
-        const gaps = [];
-        for (let i = 1; i < this._beatTimes.length; i++) gaps.push(this._beatTimes[i] - this._beatTimes[i-1]);
-        gaps.sort((a, b) => a - b);
-        const med = gaps[gaps.length >> 1];
-        if (med > 250 && med < 1400) this.bpm = Math.round(60000 / med);
-      }
-    }
-    this.beat      = Math.max(0, this.beat      - dt * 2.6);
-    this.beatFlash = Math.max(0, this.beatFlash - dt * 5.5);
-  },
-
-  stop() {
-    if (this.osc) clearTimeout(this.osc);
-    if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-    if (this.ctx) this.ctx.close();
-    Object.assign(this, {
-      ctx:null, stream:null, osc:null, ready:false,
-      beat:0, beatFlash:0, bpm:0, _hist:[], _beatTimes:[],
-      _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 }
-    });
-  }
-};
-
-/* =====================================================================
-   2. CANVAS + PALETTES
+   1. CANVAS + PALETTES
    ===================================================================== */
 const cv = document.getElementById('c');
 const g = cv.getContext('2d', { alpha: false });
@@ -385,7 +174,7 @@ const col = (t, l = 1, a = 1) => {
 };
 
 /* =====================================================================
-   3. VISUAL MODES
+   2. VISUAL MODES
    ===================================================================== */
 let time = 0;
 
@@ -527,7 +316,7 @@ const MODES = [
 let mode = 0;
 
 /* =====================================================================
-   4. RENDER LOOP
+   3. RENDER LOOP
    ===================================================================== */
 let last = performance.now();
 function frame(now) {
@@ -561,7 +350,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 /* =====================================================================
-   5. UI
+   4. UI
    ===================================================================== */
 const gate  = document.getElementById('gate');
 const hud   = document.getElementById('hud');
