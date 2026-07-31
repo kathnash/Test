@@ -133,3 +133,11 @@ the `MODES` array in `index.html` or the `LOOKS` list in `album.html`. Nothing e
 
 In `album.html`, `TINY_W` (currently 7) is the single knob for how abstract the result is. Raise
 it and the cover becomes more legible; lower it and you get pure colour fields.
+
+## Licence
+
+© 2026. All rights reserved.
+
+This repository is public so it can be served over GitHub Pages. Public is not open
+source: no licence is granted to use, copy, modify, or redistribute this code. Add a
+name or entity to the line above if you want the claim to be unambiguous.
