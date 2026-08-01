@@ -26,6 +26,17 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
+Three looks, deliberately different in kind rather than in degree:
+
+- **Drift** — calm ambient colour fields
+- **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
+- **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
+
+**Sensitivity** (low / mid / high) is a control rather than a fixed default, because the right
+value depends on how loud the room is and how far the device is from the speaker. It uses a soft
+knee — `1 - exp(-v * gain * 1.8)` — instead of clamping. A hard clamp pins every value at maximum
+as soon as gain rises, which flattens the dynamics and makes higher sensitivity look *less* alive.
+
 ## The ambient album-art page
 
 `album.html` takes a cover and abstracts it in two stages:

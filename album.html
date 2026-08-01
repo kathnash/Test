@@ -117,6 +117,7 @@
 <div id="hud">
   <button class="chip" id="art">Artwork…</button>
   <button class="chip" id="look">Drift</button>
+  <button class="chip" id="sens">Sensitivity: mid</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
   <span id="swatches"></span>
@@ -336,18 +337,42 @@ function resize() {
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   const ar = H / W;
   LO.width = LOW; LO.height = Math.max(8, Math.round(LOW * ar));
+  PREV.width = LO.width; PREV.height = LO.height;
   renderTiny();
   seedBlobs();
 }
 addEventListener('resize', resize);
 addEventListener('orientationchange', () => setTimeout(resize, 250));
 
-const LOOKS = ['Drift', 'Pulse', 'Bloom'];
+/* Three looks with genuinely different behaviour, not three tunings of one:
+   Drift is calm and ambient, Swirl feeds the previous frame back through a
+   rotation to build a vortex, Glitch tears the image into slices and splits
+   the colour channels. */
+const LOOKS = [
+  { name:'Drift',  move:0.85, kick:0.7,  rad:0.85, alpha:0.55, comp:'source-over' },
+  { name:'Swirl',  move:1.0, kick:0.95, rad:1.00, alpha:0.60, comp:'source-over' },
+  { name:'Glitch', move:1.4, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter'     }
+];
 let look = 0, time = 0;
+
+// Sensitivity is a user control because the right value depends entirely on
+// how loud the room is and how far away the phone is — no fixed default is
+// correct for both a kitchen speaker and a club.
+const SENS = [1, 1.9, 3.2];
+const SENS_NAME = ['Sensitivity: low', 'Sensitivity: mid', 'Sensitivity: high'];
+let sens = 1;
+const gain = () => SENS[sens];
+
+/* Soft knee rather than min(1, v * gain). A hard clamp pins every value at
+   maximum as soon as gain is raised, which flattens the dynamics and makes
+   HIGHER sensitivity look LESS alive — the opposite of the control's job.
+   This curve approaches 1 without ever reaching it, so quiet material gets
+   lifted while loud material still has somewhere left to go. */
+const resp = v => 1 - Math.exp(-v * gain() * 1.8);
 
 let blobs = [];
 function seedBlobs() {
-  const n = 7;
+  const n = 9;
   blobs = [];
   const GOLD = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < n; i++) {
@@ -357,32 +382,93 @@ function seedBlobs() {
       // letting Math.random() clump them.
       px: 0.5 + Math.cos(i * GOLD) * (0.14 + (i % 3) * 0.13),
       py: 0.5 + Math.sin(i * GOLD) * (0.14 + (i % 3) * 0.13),
-      sx: 0.06 + Math.random() * 0.13,
-      sy: 0.05 + Math.random() * 0.13,
-      fx: 0.07 + Math.random() * 0.16,
-      fy: 0.06 + Math.random() * 0.15,
+      sx: 0.11 + Math.random() * 0.20,
+      sy: 0.10 + Math.random() * 0.20,
       ph: Math.random() * 6.28,
-      r:  0.26 + Math.random() * 0.26,
-      band: i % 5
+      r:  0.17 + Math.random() * 0.19,
+      band: i % 5,
+      e: 0, ox: 0, oy: 0, vx: 0, vy: 0, orb: 0
     });
   }
 }
 
 const bandVal = i => [A.bass, A.mid, A.high, A.air, A.level][i] || 0;
 
+/* The fix for "it barely moves": audio drives the rate of motion and kicks
+   the blobs around, instead of only scaling a shape that a fixed clock was
+   moving anyway. */
+function updateBlobs(dt) {
+  const cfg = LOOKS[look], G = gain();
+  for (const b of blobs) {
+    const target = resp(bandVal(b.band));
+    b.e += (target - b.e) * (target > b.e ? 0.45 : 0.12);
+
+    b.ph += dt * (0.22 + b.e * 3.6) * cfg.move;
+    b.orb += dt * (0.10 + b.e * 1.5) * cfg.move;
+
+    if (A.beatFlash > 0.9) {
+      const ang = Math.random() * Math.PI * 2;
+      const p = (0.12 + b.e * 0.42) * G * cfg.kick;
+      b.vx += Math.cos(ang) * p;
+      b.vy += Math.sin(ang) * p;
+    }
+    b.vx *= 0.93; b.vy *= 0.93;
+    b.ox = (b.ox + b.vx * dt) * 0.985;   // decay back toward home
+    b.oy = (b.oy + b.vy * dt) * 0.985;
+  }
+}
+
+/* Swirl feeds the last frame back in, rotated and slightly enlarged. Each
+   frame's colour therefore spirals outward for several seconds, which is
+   what reads as a vortex rather than as moving circles. */
+const PREV = document.createElement('canvas');
+const pg = PREV.getContext('2d');
+let swirlAngle = 0;
+
+/* Isolates one colour channel of the low-res buffer, for Glitch's chromatic
+   split. Reassigning width both resizes and clears it. */
+const CH = document.createElement('canvas');
+const cg = CH.getContext('2d');
+function channel(colour) {
+  CH.width = LO.width; CH.height = LO.height;
+  cg.globalCompositeOperation = 'source-over';
+  cg.drawImage(LO, 0, 0);
+  cg.globalCompositeOperation = 'multiply';
+  cg.fillStyle = colour;
+  cg.fillRect(0, 0, CH.width, CH.height);
+  return CH;
+}
+
 function drawScene(dt) {
   const w = LO.width, h = LO.height;
+  const cfg = LOOKS[look], G = gain();
+  const energy = resp(A.level);
 
   lg.globalCompositeOperation = 'source-over';
+  lg.globalAlpha = 1;
   lg.fillStyle = ART.dark;
   lg.fillRect(0, 0, w, h);
+
+  if (look === 1 && PREV.width === w && PREV.height === h) {
+    swirlAngle += dt * (0.25 + energy * 2.2);
+    lg.save();
+    lg.translate(w / 2, h / 2);
+    lg.rotate(dt * (0.5 + energy * 3.4));
+    const s = 1 + dt * (0.10 + energy * 0.55);
+    lg.scale(s, s);
+    lg.translate(-w / 2, -h / 2);
+    lg.globalAlpha = 0.92;
+    lg.drawImage(PREV, 0, 0);
+    lg.restore();
+    lg.globalAlpha = 1;
+  }
 
   // Base wash: the crushed artwork, upscaled and drifting. Overscanned so
   // the smeared edge pixels stay off-screen.
   if (ART.img && TINY.width) {
-    const zoom = 1.5 + A.bass * 0.12;
+    const zoom = 1.45 + resp(A.bass) * 0.4;
     const dw = w * zoom, dh = h * zoom;
-    lg.globalAlpha = 0.8;
+    lg.globalAlpha = look === 1 ? 0.22 : 0.8;   // Swirl keeps the trails visible
     lg.drawImage(TINY,
       (w - dw) / 2 + Math.sin(time * 0.11) * w * 0.05,
       (h - dh) / 2 + Math.cos(time * 0.09) * h * 0.05, dw, dh);
@@ -390,19 +476,25 @@ function drawScene(dt) {
   }
 
   const P = ART.palette.length ? ART.palette : [[120,120,140]];
-  const pulse = look === 1 ? 1 : 0.45;
-  lg.globalCompositeOperation = look === 2 ? 'lighter' : 'source-over';
+  lg.globalCompositeOperation = cfg.comp;
 
   for (const b of blobs) {
-    const e = bandVal(b.band);
-    const x = (b.px + Math.sin(time * b.fx + b.ph) * b.sx) * w;
-    const y = (b.py + Math.cos(time * b.fy + b.ph * 1.7) * b.sy) * h;
-    const rad = b.r * Math.min(w, h) * (0.62 + e * 0.55 * pulse + A.beat * 0.16 * pulse);
+    let x = (b.px + Math.sin(b.ph) * b.sx + b.ox) * w;
+    let y = (b.py + Math.cos(b.ph * 1.7) * b.sy + b.oy) * h;
+    if (look === 1) {                            // orbit the centre
+      const dx = x - w / 2, dy = y - h / 2;
+      const c = Math.cos(b.orb), s = Math.sin(b.orb);
+      x = w / 2 + dx * c - dy * s;
+      y = h / 2 + dx * s + dy * c;
+    }
+    // ~3x radius swing between silence and peak, while the maximum stays
+    // small enough that blobs read as separate shapes.
+    const rad = b.r * Math.min(w, h) * (0.55 + (b.e * 0.78 + A.beat * 0.30) * cfg.rad);
     if (rad <= 0.5) continue;
 
     const [r, gg, bb] = P[b.ci % P.length];
+    const a = (look === 2 ? 0.28 : 0.4) * (0.3 + b.e * cfg.alpha * 1.5);
     const gr = lg.createRadialGradient(x, y, 0, x, y, rad);
-    const a = (look === 2 ? 0.34 : 0.5) * (0.45 + e * 0.55);
     gr.addColorStop(0,   `rgba(${r},${gg},${bb},${a})`);
     gr.addColorStop(0.55,`rgba(${r},${gg},${bb},${a * 0.42})`);
     gr.addColorStop(1,   `rgba(${r},${gg},${bb},0)`);
@@ -411,13 +503,37 @@ function drawScene(dt) {
   }
   lg.globalCompositeOperation = 'source-over';
 
+  if (look === 1) {
+    if (PREV.width !== w || PREV.height !== h) { PREV.width = w; PREV.height = h; }
+    pg.clearRect(0, 0, w, h);
+    pg.drawImage(LO, 0, 0);
+  }
+
   // Upscale — the abstraction step.
   g.drawImage(LO, 0, 0, w, h, 0, 0, W, H);
+
+  if (look === 2) {
+    const amt = Math.min(1, A.beat * 0.85 + Math.min(1, A.high * G) * 0.4);
+    if (amt > 0.04) {
+      const slices = 10, sh = H / slices;
+      for (let i = 0; i < slices; i++) {
+        if (Math.random() > 0.6) continue;
+        const dx = (Math.random() * 2 - 1) * W * 0.17 * amt;
+        g.drawImage(LO, 0, i * h / slices, w, h / slices, dx, i * sh, W, sh + 1);
+      }
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = 0.30 * amt;
+      g.drawImage(channel('#ff0000'), 0, 0, w, h, -W * 0.014 * amt, 0, W, H);
+      g.drawImage(channel('#00ffff'), 0, 0, w, h,  W * 0.014 * amt, 0, W, H);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+    }
+  }
 
   // Vignette, at full resolution so it stays clean.
   const vg = g.createRadialGradient(W/2, H/2, Math.min(W,H) * 0.3, W/2, H/2, Math.max(W,H) * 0.78);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, `rgba(0,0,0,${0.55 - A.level * 0.16})`);
+  vg.addColorStop(1, `rgba(0,0,0,${0.55 - energy * 0.22})`);
   g.fillStyle = vg; g.fillRect(0, 0, W, H);
 }
 
@@ -440,6 +556,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now; time += dt;
   A.update(dt);
+  updateBlobs(dt);
   drawScene(dt);
 
   g.globalCompositeOperation = 'overlay';
@@ -568,9 +685,13 @@ function flash(msg) {
   flashT = setTimeout(() => n.classList.remove('show'), 5200);
 }
 
+document.getElementById('sens').onclick = e => {
+  sens = (sens + 1) % SENS.length;
+  e.target.textContent = SENS_NAME[sens];
+};
 document.getElementById('look').onclick = e => {
   look = (look + 1) % LOOKS.length;
-  e.target.textContent = LOOKS[look];
+  e.target.textContent = LOOKS[look].name;
 };
 document.getElementById('full').onclick = () => {
   if (!document.fullscreenElement) (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
