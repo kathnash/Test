@@ -113,8 +113,9 @@ turns out to be a feature — it reacts to any sound in the room, not just this 
    twitches. All three are explicitly off in `audio.js`.
 
 2. **Auto-gain the analysis, not the audio.** Each frequency band is normalised against a
-   slowly-decaying running peak, so a quiet phone speaker and a loud PA both drive the visuals
-   properly with no sensitivity slider to fiddle with.
+   slowly-decaying running peak, so a quiet phone speaker and a loud PA land in a similar range
+   without touching anything. The sensitivity control sits on top of this for the cases auto-gain
+   can't reach — mainly a mic far from a quiet source.
 
 ### A route that no longer exists
 
