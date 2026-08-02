@@ -31,8 +31,8 @@ Five looks are live. Three more — **Drift**, **Glitch** and **Marble** — are
 carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker without deleting any
 code. Removing that one word brings a look back.
 
-Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Ripple, Ribbed, Marble and Lens
-bend it as a texture in a fragment shader (`fx.js`).
+Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Ripple, Ribbed, Marble, Lens and
+Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
 - **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
@@ -70,7 +70,6 @@ bend it as a texture in a fragment shader (`fx.js`).
   pushes; without it the circles pulsed while the picture inside sat still, and the look read as
   decoration rather than as reactive. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
-
 - **Cyanotype** — a contact print: deep Prussian blue field, luminous pale forms, heavy paper fibre
   and an unevenly brushed coating. Exposure and edge softness both follow the music, so the pale
   shapes bloom and their edges travel between crisp and dissolved.
