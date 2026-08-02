@@ -164,7 +164,11 @@ const FX = {
         // the glass versus further from it.
         // ================================================================
         else if (uMode == 1){
-          float cols = 32.0 + floor(uMid * 8.0);
+          // Fixed. Driving the rib count from audio through a floor() makes the
+          // whole pane snap to a new position every time the band crosses a
+          // threshold — the glass appeared to jitter. The pane is a physical
+          // object; only what is behind it should move.
+          float cols = 34.0;
           float x    = uv.x * cols;
           float rib  = floor(x);
           float f    = fract(x) * 2.0 - 1.0;          // -1..1 across the flute
@@ -176,11 +180,16 @@ const FX = {
           // object moving behind appear to slide backwards within each rib and
           // jump between them — without it you get stripes, not glass.
           float lensF = sin(f * 1.5707963);        // cylindrical, not linear
-          float mag   = 0.38 - uBass * 0.10;
+          float mag   = 0.38;               // lens geometry is fixed too
           float sx    = (rib + 0.5) / cols - lensF * (0.5 / cols) * mag;
 
-          float wob = sin(uv.y * 3.0 + uTime * 0.18) * 0.004 * (1.0 + uLevel);
-          vec2 suv = coverUV(vec2(sx + wob, uv.y));
+          // The subject behind the glass drifts and sways instead: a slow
+          // parallax that the music pushes, so depth changes without the pane
+          // ever appearing to shift.
+          vec2 par = vec2(sin(uTime * 0.105) * 0.020, cos(uTime * 0.082) * 0.016)
+                   * (0.55 + uLevel * 1.5);
+          float wob = sin(uv.y * 3.0 + uTime * 0.18) * 0.003 * (0.4 + uLevel);
+          vec2 suv = coverUV(vec2(sx + wob + par.x, uv.y + par.y));
 
           // The clarity field drifts slowly and is nudged by transients, so
           // *which* parts are sharp is itself the animation.
@@ -270,7 +279,8 @@ const FX = {
         // -back saturation give it the litho feel.
         // ================================================================
         else {
-          float grid = 5.0 + floor(uHigh * 1.0);
+          float grid = 5.0;                 // fixed: a floor() here snapped the
+                                            // whole grid to a new size on transients
           float ar   = uRes.x / max(uRes.y, 1.0);
           vec2  gv   = vec2(uv.x * ar, uv.y) * grid;
           vec2  cell = floor(gv);
@@ -284,13 +294,17 @@ const FX = {
           if (r > pulse){
             col = vec3(0.035, 0.033, 0.045);
           } else {
-            // Fisheye: compress toward the rim so the centre magnifies.
-            float rr = pow(r / pulse, 1.85) * pulse;
+            // Fisheye centred on this circle. At the previous 2.6x zoom each
+            // circle sampled nearly three cells' worth, so neighbours showed
+            // heavily overlapping content and the bulge read as one lens over
+            // the whole page rather than one lens per circle. At ~1.15x each
+            // circle covers its own patch and its own centre magnifies.
+            float rr = pow(r / pulse, 2.15) * pulse;
             vec2 warped = (r > 0.0001) ? (f / r) * rr : f;
             vec2 centre = (cell + 0.5) / grid;
             centre.x /= ar;
             vec2 suv = centre + warped * (0.5 / grid) * vec2(1.0 / ar, 1.0)
-                              * (2.6 + uBass * 0.55);
+                              * (1.15 + uBass * 0.18);
             col = tex(coverUV(suv));
 
             // The artwork's own colours, lifted slightly rather than remapped
@@ -304,9 +318,10 @@ const FX = {
             col *= 0.94 + 0.20 * (1.0 - smoothstep(0.0, 1.0, r / pulse));
           }
 
-          // Litho grain, coarse and heavy — sampled below pixel resolution
-          // so it clumps the way print grain does instead of shimmering.
-          float gr = hash(floor(vUv * uRes / 1.7) + floor(uTime * 12.0) * 3.3);
+          // Litho grain, coarse and heavy — sampled below pixel resolution so
+          // it clumps the way print grain does. Static: it used to resample on
+          // floor(uTime * 12.0), which is a 12Hz strobe, not grain.
+          float gr = hash(floor(vUv * uRes / 1.7));
           col += (gr - 0.5) * 0.20;
         }
 

@@ -27,13 +27,18 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
-Eight looks, deliberately different in kind rather than in degree. The first four paint over the
-artwork on a 2D canvas; the last four bend it as a texture in a fragment shader (`fx.js`).
+Five looks are live. Three more — **Drift**, **Glitch** and **Marble** — are fully implemented but
+carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker without deleting any
+code. Removing that one word brings a look back.
+
+Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Ripple, Ribbed, Marble and Lens
+bend it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
-- **Poster** — the artwork quantised to a coarse grid, each cell snapped to its nearest extracted
-  colour and drawn as flat hard-edged blocks with smoothing off. Rows shear apart along different
-  frequency bands. The graphic counterpart to the soft looks.
+- **Poster** — the artwork read at a grid, each cell drawn as a flat hard-edged block with
+  smoothing off. Each cell keeps both its nearest palette colour and its true colour, blended by
+  `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture), so the picture reads without giving up
+  the flat poster feel. Rows shear apart along different frequency bands.
 - **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
 - **Ripple** — refraction through a moving water surface. A height field is built from summed
@@ -43,7 +48,8 @@ artwork on a 2D canvas; the last four bend it as a texture in a fragment shader 
   is behind it, magnified and **inverted**. The inversion is the tell — without it, something
   moving behind slides the wrong way and the result reads as stripes rather than glass. Clarity is
   deliberately uneven and drifts, so some of the image stays sharp while other parts dissolve, and
-  *which* parts are sharp is itself the animation.
+  *which* parts are sharp is itself the animation. The pane never moves: rib count and lens
+  geometry are constants, and only the subject behind them drifts.
 - **Marble** — irregular blobs on a field of the artwork's dominant colour, each ringed by a bled
   black outline, sizes and density varying across the canvas, with the artwork itself reading
   through both blobs and ground. Beats swell nearby blobs outward like spreading ink. Built from a
@@ -53,10 +59,10 @@ artwork on a 2D canvas; the last four bend it as a texture in a fragment shader 
   and the field is evaluated across a 3×3 neighbourhood so blobs can grow past their own cell and
   merge. Testing only the cell a pixel falls in clips every blob at the cell wall, which turns an
   organic field into a sliced grid the moment anything grows.
-- **Lens** — a grid of large, near-touching circles on a dark ground, each holding a fisheye view
-  of the image behind it in the artwork's own colours, under coarse print grain sampled below
-  pixel resolution so it clumps rather than shimmers. A riso duotone was tried here and removed:
-  it read as a filter laid over the image rather than as the image itself.
+- **Lens** — a grid of large, near-touching circles on a dark ground, each holding a fisheye of the
+  patch of image behind it, centred on that circle, in the artwork's own colours, under coarse
+  static print grain. A riso duotone was tried here and removed: it read as a filter laid over the
+  image rather than as the image itself.
 
 Eight is too many to cycle, so the look button opens a picker. Space still steps through.
 
@@ -90,7 +96,14 @@ stops entirely while the page is hidden.
 If WebGL is unavailable the four shader looks are removed from the list at boot rather than left
 in place to render a blank screen.
 
-Two things worth knowing if you touch the shader:
+**Never quantise a parameter that defines the geometry.** Rib count and grid count were derived
+from audio through `floor()`, so every time a band crossed a threshold the whole pane or grid
+snapped to a new size — read as jitter, and made a fixed physical object look like it was moving.
+Anything the eye treats as a static structure has to be a constant; drive what sits behind it
+instead. Grain had the same problem in time: resampling on `floor(uTime * 12.0)` is a 12Hz strobe,
+not grain.
+
+Two more things worth knowing if you touch the shader:
 
 - **Normalise a height field before raising it to a power.** The caustic term started as
   `pow(h*0.5+0.5, 6)` on an unnormalised `h` that reached 1.6 — `1.6^6` is 17, and whole regions

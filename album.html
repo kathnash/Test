@@ -136,7 +136,7 @@
 
 <div id="hud">
   <button class="chip" id="art">Artwork…</button>
-  <button class="chip" id="look">Drift</button>
+  <button class="chip" id="look">Poster</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
@@ -397,17 +397,20 @@ addEventListener('orientationchange', () => setTimeout(resize, 250));
    image into slices and splits the colour channels.
    Referenced by name, never by index, so the order can change freely. */
 const LOOKS = [
-  { name:'Drift',  move:0.85, kick:0.70, rad:0.85, alpha:0.55, comp:'source-over' },
+  // hidden:true keeps a look fully implemented but out of the picker, so
+  // it can be brought back by deleting one word.
+  { name:'Drift',  move:0.85, kick:0.70, rad:0.85, alpha:0.55, comp:'source-over', hidden:true },
   { name:'Poster', move:0.50, kick:1.00, rad:1.00, alpha:0.60, comp:'source-over' },
   { name:'Swirl',  move:1.00, kick:0.95, rad:1.00, alpha:0.60, comp:'source-over' },
-  { name:'Glitch', move:1.40, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter'     },
+  { name:'Glitch', move:1.40, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter', hidden:true },
   // Shader looks: the artwork is bent rather than painted over.
   { name:'Ripple', fx:'Ripple' },
   { name:'Ribbed', fx:'Ribbed' },
-  { name:'Marble', fx:'Marble' },
+  { name:'Marble', fx:'Marble', hidden:true },
   { name:'Lens',   fx:'Lens'   }
 ];
-let look = 0, time = 0;
+let look = LOOKS.findIndex(l => !l.hidden);
+let time = 0;
 const is = name => LOOKS[look].name === name;
 
 // Sensitivity is a user control because the right value depends entirely on
@@ -515,11 +518,14 @@ function channel(colour) {
    at a coarse grid, each cell snapped to its nearest extracted colour, and
    drawn as flat rectangles with no smoothing — so it stays unmistakably the
    album while reading as hard-edged colour blocks rather than a blur. */
-const POSTER = { cols: 0, rows: 0, cell: null };
+const POSTER = { cols: 0, rows: 0, cell: null, rgb: null };
+// 0 = pure palette, 1 = the picture untouched. Partway keeps the flat
+// poster feel while letting the image read.
+const POSTER_IMAGE = 0.62;
 
 function buildPoster() {
   if (!ART.img || !srcW(ART.img) || !ART.palette.length) return;
-  const cols = 14;
+  const cols = 24;   // finer grid reads more of the picture
   const rows = Math.max(3, Math.round(cols * (H || 1) / (W || 1)));
   const c = document.createElement('canvas');
   c.width = cols; c.height = rows;
@@ -530,8 +536,13 @@ function buildPoster() {
     x.drawImage(ART.img, (cols - dw) / 2, (rows - dh) / 2, dw, dh);
     const d = x.getImageData(0, 0, cols, rows).data;
     const cell = new Uint8Array(cols * rows);
+    // Keep each cell's true colour as well as its palette index, so the
+    // blocks can be blended back toward the actual picture instead of being
+    // limited to five flat tones.
+    const rgb = new Uint8Array(cols * rows * 3);
     for (let i = 0; i < cols * rows; i++) {
       const r = d[i*4], g2 = d[i*4+1], b = d[i*4+2];
+      rgb[i*3] = r; rgb[i*3+1] = g2; rgb[i*3+2] = b;
       let best = 0, bd = Infinity;
       for (let p = 0; p < ART.palette.length; p++) {
         const [pr, pg, pb] = ART.palette[p];
@@ -540,7 +551,7 @@ function buildPoster() {
       }
       cell[i] = best;
     }
-    POSTER.cols = cols; POSTER.rows = rows; POSTER.cell = cell;
+    POSTER.cols = cols; POSTER.rows = rows; POSTER.cell = cell; POSTER.rgb = rgb;
   } catch (e) { POSTER.cell = null; }   // tainted source
 }
 
@@ -562,13 +573,18 @@ function drawPoster(dt) {
     // made Swirl look like it was punched through to the background.
     for (let c = -2; c <= cols + 1; c++) {
       const src = c < 0 ? 0 : c > cols - 1 ? cols - 1 : c;
+      const idx = r * cols + src;
       const shift = (A.beat > 0.55 && (r + c) % 3 === 0) ? 1 : 0;
-      const [pr, pg, pb] = ART.palette[(cell[r * cols + src] + shift) % ART.palette.length];
+      const pal = ART.palette[(cell[idx] + shift) % ART.palette.length];
+      const k = POSTER_IMAGE;
+      const pr = pal[0] + (POSTER.rgb[idx*3]     - pal[0]) * k;
+      const pg = pal[1] + (POSTER.rgb[idx*3 + 1] - pal[1]) * k;
+      const pb = pal[2] + (POSTER.rgb[idx*3 + 2] - pal[2]) * k;
       // Blocks grow toward their neighbours on transients and open up gaps
       // of the ground colour when the music is quiet.
       const grow = 1 + e * 0.28 + A.beat * 0.45;
       const bw = cw * grow, bh = ch * grow;
-      g.fillStyle = `rgb(${pr},${pg},${pb})`;
+      g.fillStyle = `rgb(${pr|0},${pg|0},${pb|0})`;
       g.fillRect(c * cw + shove - (bw - cw) / 2, r * ch - (bh - ch) / 2, bw + 1, bh + 1);
     }
   }
@@ -910,6 +926,7 @@ const lookMenu = document.getElementById('lookmenu');
 function buildLookMenu() {
   lookMenu.innerHTML = '';
   LOOKS.forEach((L, i) => {
+    if (L.hidden) return;
     const b = document.createElement('button');
     b.textContent = L.name;
     b.setAttribute('aria-current', String(i === look));
@@ -959,7 +976,12 @@ function poke() {
 ['pointermove','pointerdown','keydown'].forEach(ev => addEventListener(ev, poke));
 addEventListener('keydown', e => {
   if (!gate.classList.contains('hidden')) return;
-  if (e.key === ' ') { e.preventDefault(); setLookIndex((look + 1) % LOOKS.length); }
+  if (e.key === ' ') {
+    e.preventDefault();
+    let n = look;
+    do { n = (n + 1) % LOOKS.length; } while (LOOKS[n].hidden && n !== look);
+    setLookIndex(n);
+  }
   if (e.key.toLowerCase() === 'f') document.getElementById('full').click();
 });
 
@@ -970,8 +992,8 @@ addEventListener('keydown', e => {
   if (!FX.init(document.getElementById('fxc'))) {
     for (let i = LOOKS.length - 1; i >= 0; i--) if (LOOKS[i].fx) LOOKS.splice(i, 1);
   }
-  buildLookMenu();
   resize();
+  setLookIndex(look);
   try { applyArtwork(await sampleArtwork()); } catch (e) { /* visuals still run */ }
   requestAnimationFrame(frame);
 })();
