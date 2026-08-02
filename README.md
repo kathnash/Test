@@ -6,8 +6,9 @@ no server.
 - **`index.html`** — spectrum-driven visuals (Bloom / Particles / Ribbon)
 - **`album.html`** — album artwork dissolved into drifting colour fields that breathe with the music
 - **`audio.js`** — the analysis engine both pages share
+- **`fx.js`** — the WebGL distortion looks used by `album.html`
 
-Keep the three files together in one folder. Microphone access requires `https://` when hosted,
+Keep the four files together in one folder. Microphone access requires `https://` when hosted,
 though opening the files directly from disk works for local testing.
 
 ## Try it
@@ -78,7 +79,7 @@ Two things worth knowing if you touch the shader:
 
 Drop or pick a video instead of an image and it becomes the source. It is muted, looped, and
 played inline, its crushed copy is re-read every frame, and the palette is re-derived a few times
-a second so the colours follow the footage. Everything else — all four looks — works unchanged.
+a second so the colours follow the footage. Everything else — all eight looks — works unchanged.
 
 Object URLs are same-origin, so frames stay readable for colour sampling. Format support is the
 browser's: MP4 and MOV are the safe choices, and Safari will not play WebM.
