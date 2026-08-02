@@ -35,10 +35,13 @@ Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Ripple, Ribbed, 
 bend it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
-- **Poster** — the artwork read at a grid, each cell drawn as a flat hard-edged block with
-  smoothing off. Each cell keeps both its nearest palette colour and its true colour, blended by
-  `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture), so the picture reads without giving up
-  the flat poster feel. Rows shear apart along different frequency bands.
+- **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
+  blocks. **How many appear is the animation**: a sparse tenth of the most distinctive cells in
+  near-silence, the whole composition at peak. Cells are chosen by *rank*, not by a fixed strength
+  threshold — thresholding on the value left a gradient with one small subject empty at a level
+  that filled a busy cover completely. Each cell keeps both its nearest palette colour and its true
+  colour, blended by `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture). Rows shear apart
+  along different frequency bands.
 - **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
 - **Ripple** — refraction through a moving water surface. A height field is built from summed
@@ -61,7 +64,9 @@ bend it as a texture in a fragment shader (`fx.js`).
   organic field into a sliced grid the moment anything grows.
 - **Lens** — a grid of large, near-touching circles on a dark ground, each holding a fisheye of the
   patch of image behind it, centred on that circle, in the artwork's own colours, under coarse
-  static print grain. A riso duotone was tried here and removed: it read as a filter laid over the
+  static print grain. The whole image drifts behind the grid on a slow Lissajous that the music
+  pushes; without it the circles pulsed while the picture inside sat still, and the look read as
+  decoration rather than as reactive. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
 
 The look button opens a picker; space steps through the live looks, skipping hidden ones.
