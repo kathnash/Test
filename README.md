@@ -128,9 +128,22 @@ Three more things worth knowing if you touch the shader:
 
 ## Video sources
 
-Drop or pick a video instead of an image and it becomes the source. It is muted, looped, and
-played inline, its crushed copy is re-read every frame, and the palette is re-derived a few times
-a second so the colours follow the footage. Everything else — every look — works unchanged.
+Drop or pick a video instead of an image and it becomes the source. It is muted, looped, and played
+inline, and the palette is re-derived a couple of times a second so the colours follow the footage.
+Everything else — every look — works unchanged.
+
+Two things keep a full-resolution phone clip from stuttering:
+
+- **Everything reads from one bounded working copy** (`SRC`, capped at 512px), never from the media
+  element. The source used to be touched four separate ways — the crushed copy every frame, the
+  palette and the Poster grid on a timer with a `getImageData` readback each, and the WebGL texture
+  upload every frame. On a 4K clip every one of those is enormous, and the palette and grid work ran
+  whichever look was on screen, which is why changing look didn't help.
+- **New frames are detected with `requestVideoFrameCallback`**, which fires once per decoded frame.
+  Phone video is typically 30fps against a 60Hz display, so half the display frames show a picture
+  that hasn't changed. `currentTime` is useless for spotting this — it advances on about 95% of
+  display frames regardless. With rVFC the video path runs on roughly a tenth of frames instead of
+  all of them. Where rVFC is missing the work simply runs every frame, as before.
 
 Object URLs are same-origin, so frames stay readable for colour sampling. Format support is the
 browser's: MP4 and MOV are the safe choices, and Safari will not play WebM.

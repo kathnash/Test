@@ -46,6 +46,7 @@ const FX = {
       uniform float uTexAspect;
       uniform float uTime;
       uniform float uPhase;   // integrated, not uTime * rate
+      uniform float uSwell;   // slow envelope for refraction depth
       uniform int   uMode;
       uniform float uBass, uMid, uHigh, uLevel, uBeat;
       uniform vec3  uPal[5];
@@ -152,7 +153,13 @@ const FX = {
           // Small on purpose. The gradient of a sum of sines runs to ~4, so
           // an offset in the hundredths already bends the image hard; at the
           // tenths it stops being refraction and becomes soup.
-          float amt = 0.0035 + uBass * 0.0300 + uBeat * 0.0160;
+          //
+          // Driven by a dedicated slow envelope rather than by bass and beat
+          // directly. This scales the whole displacement field at once, so a
+          // fast rise moves every pixel of the image simultaneously — which
+          // reads as a snap however smooth the underlying band is. Depth of
+          // water should swell, not switch.
+          float amt = 0.0035 + uSwell * 0.0320;
           vec2 off = grad * amt;
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -380,7 +387,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uMode','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uMode','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -449,6 +456,7 @@ const FX = {
     gl.uniform1f(this.u.uTexAspect, this.texAspect);
     gl.uniform1f(this.u.uTime, p.time);
     gl.uniform1f(this.u.uPhase, p.phase);
+    gl.uniform1f(this.u.uSwell, p.swell);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);

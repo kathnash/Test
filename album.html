@@ -267,9 +267,31 @@ function extractPalette(img, count = 5) {
 const srcW = m => m ? (m.videoWidth || m.width || 0) : 0;
 const srcH = m => m ? (m.videoHeight || m.height || 0) : 0;
 
+/* Everything downstream reads from this bounded working copy, never from the
+   original media. A phone video is commonly 1080p or 4K, and the source was
+   previously touched four separate ways — the crushed copy every frame, the
+   palette and the Poster grid every 0.4s (each with a getImageData readback),
+   and the WebGL texture upload every frame. At 4K each of those is enormous,
+   and the palette and grid work ran whichever look was on screen, which is
+   why changing look didn't help. One downscale per frame caps all of it. */
+const SRC = document.createElement('canvas');
+const sg  = SRC.getContext('2d', { willReadFrequently: true });
+const SRC_MAX = 512;
+
+function updateSource() {
+  const w = srcW(ART.img), h = srcH(ART.img);
+  if (!ART.img || !w || !h) return false;
+  const k  = Math.min(1, SRC_MAX / Math.max(w, h));
+  const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
+  if (SRC.width !== cw || SRC.height !== ch) { SRC.width = cw; SRC.height = ch; }
+  sg.drawImage(ART.img, 0, 0, cw, ch);
+  return true;
+}
+
 function applyArtwork(img, title = '', artist = '', isVideo = false) {
-  const { palette, dark } = extractPalette(img);
   ART.img = img;
+  updateSource();
+  const { palette, dark } = extractPalette(SRC);
   ART.raw = palette;                    // true album colours, shown as swatches
   ART.palette = palette.map(vivify);    // brightened, used to paint
   ART.dark = dark;
@@ -279,7 +301,7 @@ function applyArtwork(img, title = '', artist = '', isVideo = false) {
   buildPoster();
   seedBlobs();
   paintSwatches();
-  FX.setSource(ART.img, srcW(ART.img), srcH(ART.img));
+  FX.setSource(SRC, SRC.width, SRC.height);
 
   const np = document.getElementById('np');
   if (title || artist) {
@@ -351,14 +373,14 @@ let W = 0, H = 0, DPR = 1, LOW = 132;
 let VIGNETTE = null, GRAIN_SHEET = null;
 
 function renderTiny() {
-  if (!ART.img || !srcW(ART.img)) return;
+  if (!SRC.width) return;
   const ar = LO.height / Math.max(1, LO.width);
   TINY.width = TINY_W;
   TINY.height = Math.max(3, Math.round(TINY_W * ar));
-  const s = Math.max(TINY.width / srcW(ART.img), TINY.height / srcH(ART.img));
-  const dw = srcW(ART.img) * s, dh = srcH(ART.img) * s;
+  const s = Math.max(TINY.width / SRC.width, TINY.height / SRC.height);
+  const dw = SRC.width * s, dh = SRC.height * s;
   tg.clearRect(0, 0, TINY.width, TINY.height);
-  tg.drawImage(ART.img, (TINY.width - dw) / 2, (TINY.height - dh) / 2, dw, dh);
+  tg.drawImage(SRC, (TINY.width - dw) / 2, (TINY.height - dh) / 2, dw, dh);
 }
 
 function resize() {
@@ -524,16 +546,16 @@ const POSTER = { cols: 0, rows: 0, cell: null, rgb: null, str: null, sorted: nul
 const POSTER_IMAGE = 0.74;
 
 function buildPoster() {
-  if (!ART.img || !srcW(ART.img) || !ART.palette.length) return;
+  if (!SRC.width || !ART.palette.length) return;
   const cols = 24;   // finer grid reads more of the picture
   const rows = Math.max(3, Math.round(cols * (H || 1) / (W || 1)));
   const c = document.createElement('canvas');
   c.width = cols; c.height = rows;
   const x = c.getContext('2d', { willReadFrequently: true });
-  const s = Math.max(cols / srcW(ART.img), rows / srcH(ART.img));
-  const dw = srcW(ART.img) * s, dh = srcH(ART.img) * s;
+  const s = Math.max(cols / SRC.width, rows / SRC.height);
+  const dw = SRC.width * s, dh = SRC.height * s;
   try {
-    x.drawImage(ART.img, (cols - dw) / 2, (rows - dh) / 2, dw, dh);
+    x.drawImage(SRC, (cols - dw) / 2, (rows - dh) / 2, dw, dh);
     const d = x.getImageData(0, 0, cols, rows).data;
     const cell = new Uint8Array(cols * rows);
     // Keep each cell's true colour as well as its palette index, so the
@@ -634,7 +656,7 @@ function drawPoster(dt) {
 
 function drawFX(cfg) {
   FX.render({
-    time, phase: ripplePhase, mode: FX.MODES[cfg.fx],
+    time, phase: ripplePhase, swell: rippleSwell, mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
     level: resp(A.level), beat: A.beat,
     palette: ART.palette.length ? ART.palette : [[120,120,140]],
@@ -776,7 +798,8 @@ const GRAIN = (() => {
 let last = performance.now(), videoClock = 0;
 // Integrated separately from `time` so the ripple surface can change speed
 // without its phase jumping.
-let ripplePhase = 0;
+let ripplePhase = 0, rippleSwell = 0;
+let videoDirty = false, videoRVFC = false;
 let hidden = false;
 document.addEventListener('visibilitychange', () => {
   hidden = document.hidden;
@@ -789,18 +812,31 @@ function frame(now) {
   last = now; time += dt;
   A.update(dt);
 
-  // A video keeps changing, so its crushed copy has to be re-read every
-  // frame. Re-deriving the palette is far more expensive, so that happens a
-  // few times a second — colours follow the footage without the cost.
-  if (ART.isVideo && ART.img && ART.img.readyState >= 2) {
+  // A video keeps changing, so its downscaled copy and everything derived
+  // from it are refreshed as new frames arrive. Re-deriving the palette costs
+  // far more, so that runs a couple of times a second instead — the colours
+  // follow the footage without paying for it every frame.
+  // Phone video is usually 30fps against a 60Hz display, so half of these
+  // frames are the same picture, and redrawing and re-uploading an unchanged
+  // one is pure cost. currentTime is no use for detecting this — it advances
+  // on ~95% of display frames regardless of whether a new frame was decoded.
+  // requestVideoFrameCallback fires exactly once per decoded frame; where it
+  // is missing, fall back to doing the work every frame.
+  const vFresh = ART.isVideo && ART.img && ART.img.readyState >= 2 &&
+                 (videoDirty || !videoRVFC);
+  if (vFresh) {
+    videoDirty = false;
+    updateSource();                       // one bounded draw, everything else reads it
     renderTiny();
     // Re-upload the frame only when a shader look is actually on screen.
-    if (LOOKS[look].fx) FX.setSource(ART.img, srcW(ART.img), srcH(ART.img));
+    if (LOOKS[look].fx) FX.setSource(SRC, SRC.width, SRC.height);
+  }
+  if (ART.isVideo && ART.img && ART.img.readyState >= 2) {
     videoClock += dt;
-    if (videoClock > 0.4) {
+    if (videoClock > 0.7) {
       videoClock = 0;
       try {
-        const { palette, dark } = extractPalette(ART.img);
+        const { palette, dark } = extractPalette(SRC);
         ART.raw = palette;
         ART.palette = palette.map(vivify);
         ART.dark = dark;
@@ -812,6 +848,11 @@ function frame(now) {
 
   updateDrops(dt);
   ripplePhase += dt * (0.30 + resp(A.level) * 0.14);
+  // Refraction depth gets a slower envelope than the bands themselves. It
+  // scales the entire displacement field, so it has to glide.
+  const swTarget = Math.min(1, resp(A.bass) * 0.85 + A.beat * 0.45);
+  rippleSwell += (swTarget - rippleSwell) *
+                 (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.18 : 0.55)));
   if (LOOKS[look].fx) { drawFX(LOOKS[look]); requestAnimationFrame(frame); return; }
   updateBlobs(dt);
   drawScene(dt);
@@ -908,6 +949,15 @@ function readFile(file) {
       v.play().catch(() => {});
       try { applyArtwork(v, name, '', true); }
       catch (e) { flash('Could not read that video.'); }
+
+      videoRVFC = typeof v.requestVideoFrameCallback === 'function';
+      if (videoRVFC) {
+        const tick = () => {
+          videoDirty = true;
+          if (ART.img === v) v.requestVideoFrameCallback(tick);
+        };
+        v.requestVideoFrameCallback(tick);
+      }
     };
     v.onerror = () => flash('Could not play that video. Try an MP4.');
     return;
@@ -985,7 +1035,7 @@ function setLookIndex(i) {
   document.body.classList.toggle('fx', usingFX);
   if (usingFX) {
     FX.resize(W, H);
-    FX.setSource(ART.img, srcW(ART.img), srcH(ART.img));
+    FX.setSource(SRC, SRC.width, SRC.height);
   } else {
     // Clear the 2D canvas so a stale frame from before the shader look
     // cannot flash while the trail-fade looks build back up.
