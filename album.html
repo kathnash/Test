@@ -85,6 +85,22 @@
   #swatches{ display:flex; gap:4px; align-items:center; }
   #swatches i{ width:15px; height:15px; border-radius:4px; display:block; box-shadow:0 0 0 1px rgba(255,255,255,.15) inset; }
 
+  #lookmenu{
+    position:fixed; z-index:22; left:14px; bottom:60px;
+    display:none; flex-direction:column; gap:2px; padding:6px;
+    border-radius:14px; border:1px solid var(--line); background:var(--panel);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    max-height:60vh; overflow-y:auto;
+  }
+  #lookmenu.on{ display:flex; }
+  #lookmenu button{
+    appearance:none; cursor:pointer; text-align:left; white-space:nowrap;
+    padding:9px 16px; border-radius:9px; border:0; background:transparent;
+    color:var(--ui); font:inherit; font-size:13.5px;
+  }
+  #lookmenu button:hover{ background:rgba(255,255,255,.10); }
+  #lookmenu button[aria-current="true"]{ background:rgba(255,255,255,.9); color:#0a0a0d; }
+
   #drop{
     position:fixed; inset:0; z-index:40; display:none;
     align-items:center; justify-content:center;
@@ -124,10 +140,12 @@
   <button class="chip" id="restart">Change source</button>
 </div>
 
+<div id="lookmenu"></div>
 <div id="drop"><div>Drop artwork to use it</div></div>
 <input type="file" id="file" accept="image/*,video/*" hidden>
 
 <script src="audio.js"></script>
+<script src="fx.js"></script>
 <script>
 "use strict";
 
@@ -257,6 +275,7 @@ function applyArtwork(img, title = '', artist = '', isVideo = false) {
   buildPoster();
   seedBlobs();
   paintSwatches();
+  FX.setSource(ART.img, srcW(ART.img), srcH(ART.img));
 
   const np = document.getElementById('np');
   if (title || artist) {
@@ -346,6 +365,7 @@ function resize() {
   const ar = H / W;
   LO.width = LOW; LO.height = Math.max(8, Math.round(LOW * ar));
   PREV.width = LO.width; PREV.height = LO.height;
+  FX.resize(W, H);
   renderTiny();
   buildPoster();
   seedBlobs();
@@ -362,7 +382,12 @@ const LOOKS = [
   { name:'Drift',  move:0.85, kick:0.70, rad:0.85, alpha:0.55, comp:'source-over' },
   { name:'Poster', move:0.50, kick:1.00, rad:1.00, alpha:0.60, comp:'source-over' },
   { name:'Swirl',  move:1.00, kick:0.95, rad:1.00, alpha:0.60, comp:'source-over' },
-  { name:'Glitch', move:1.40, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter'     }
+  { name:'Glitch', move:1.40, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter'     },
+  // Shader looks: the artwork is bent rather than painted over.
+  { name:'Ripple', fx:'Ripple' },
+  { name:'Ribbed', fx:'Ribbed' },
+  { name:'Marble', fx:'Marble' },
+  { name:'Lens',   fx:'Lens'   }
 ];
 let look = 0, time = 0;
 const is = name => LOOKS[look].name === name;
@@ -405,6 +430,18 @@ function seedBlobs() {
 }
 
 const bandVal = i => [A.bass, A.mid, A.high, A.air, A.level][i] || 0;
+
+/* Shared by Ripple (expanding rings) and Marble (ink pushing the pattern
+   outward). Four at a time is all the shader carries. */
+let drops = [];
+function updateDrops(dt) {
+  for (const d of drops) d.age += dt;
+  drops = drops.filter(d => d.age < 6);
+  if (A.beatFlash > 0.9) {
+    drops.push({ x: 0.15 + Math.random() * 1.2, y: Math.random(), age: 0 });
+    if (drops.length > 4) drops.shift();
+  }
+}
 
 /* The fix for "it barely moves": audio drives the rate of motion and kicks
    the blobs around, instead of only scaling a shape that a fixed clock was
@@ -518,7 +555,20 @@ function drawPoster(dt) {
   g.imageSmoothingEnabled = true;
 }
 
+function drawFX(cfg) {
+  const out = FX.render({
+    time, mode: FX.MODES[cfg.fx],
+    bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
+    level: resp(A.level), beat: A.beat,
+    palette: ART.palette.length ? ART.palette : [[120,120,140]],
+    drops
+  });
+  if (!out) { g.fillStyle = ART.dark; g.fillRect(0, 0, W, H); return; }
+  g.drawImage(out, 0, 0, out.width, out.height, 0, 0, W, H);
+}
+
 function drawScene(dt) {
+  if (LOOKS[look].fx) return drawFX(LOOKS[look]);
   if (is('Poster')) return drawPoster(dt);
   const w = LO.width, h = LO.height;
   const cfg = LOOKS[look], G = gain();
@@ -654,6 +704,8 @@ function frame(now) {
   // few times a second — colours follow the footage without the cost.
   if (ART.isVideo && ART.img && ART.img.readyState >= 2) {
     renderTiny();
+    // Re-upload the frame only when a shader look is actually on screen.
+    if (LOOKS[look].fx) FX.setSource(ART.img, srcW(ART.img), srcH(ART.img));
     videoClock += dt;
     if (videoClock > 0.4) {
       videoClock = 0;
@@ -669,11 +721,12 @@ function frame(now) {
   }
 
   updateBlobs(dt);
+  updateDrops(dt);
   drawScene(dt);
 
   // Grain hides banding in the soft looks, but only muddies Poster's flat
   // blocks, which are meant to read as clean colour.
-  if (!is('Poster')) {
+  if (!is('Poster') && !LOOKS[look].fx) {
     g.globalCompositeOperation = 'overlay';
     g.globalAlpha = 0.035;
     for (let y = 0; y < H; y += 128) for (let x = 0; x < W; x += 128) g.drawImage(GRAIN, x, y);
@@ -822,10 +875,30 @@ document.getElementById('sens').onclick = e => {
   sens = (sens + 1) % SENS.length;
   e.target.textContent = SENS_NAME[sens];
 };
+const lookMenu = document.getElementById('lookmenu');
+function buildLookMenu() {
+  lookMenu.innerHTML = '';
+  LOOKS.forEach((L, i) => {
+    const b = document.createElement('button');
+    b.textContent = L.name;
+    b.setAttribute('aria-current', String(i === look));
+    b.onclick = () => { setLookIndex(i); lookMenu.classList.remove('on'); };
+    lookMenu.appendChild(b);
+  });
+}
+function setLookIndex(i) {
+  look = i;
+  document.getElementById('look').textContent = LOOKS[look].name;
+  buildLookMenu();
+}
 document.getElementById('look').onclick = e => {
-  look = (look + 1) % LOOKS.length;
-  e.target.textContent = LOOKS[look].name;
+  e.stopPropagation();
+  buildLookMenu();
+  lookMenu.classList.toggle('on');
 };
+addEventListener('pointerdown', e => {
+  if (!lookMenu.contains(e.target) && e.target.id !== 'look') lookMenu.classList.remove('on');
+});
 document.getElementById('full').onclick = () => {
   if (!document.fullscreenElement) (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
   else document.exitFullscreen();
@@ -845,12 +918,18 @@ function poke() {
 ['pointermove','pointerdown','keydown'].forEach(ev => addEventListener(ev, poke));
 addEventListener('keydown', e => {
   if (!gate.classList.contains('hidden')) return;
-  if (e.key === ' ') { e.preventDefault(); document.getElementById('look').click(); }
+  if (e.key === ' ') { e.preventDefault(); setLookIndex((look + 1) % LOOKS.length); }
   if (e.key.toLowerCase() === 'f') document.getElementById('full').click();
 });
 
 // --- boot -------------------------------------------------------------
 (async () => {
+  // Without WebGL the shader looks cannot render at all, so remove them
+  // rather than leaving entries that would show a blank screen.
+  if (!FX.init()) {
+    for (let i = LOOKS.length - 1; i >= 0; i--) if (LOOKS[i].fx) LOOKS.splice(i, 1);
+  }
+  buildLookMenu();
   resize();
   try { applyArtwork(await sampleArtwork()); } catch (e) { /* visuals still run */ }
   requestAnimationFrame(frame);

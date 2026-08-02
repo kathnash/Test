@@ -26,7 +26,8 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
-Four looks, deliberately different in kind rather than in degree:
+Eight looks, deliberately different in kind rather than in degree. The first four paint over the
+artwork on a 2D canvas; the last four bend it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
 - **Poster** — the artwork quantised to a coarse grid, each cell snapped to its nearest extracted
@@ -34,6 +35,18 @@ Four looks, deliberately different in kind rather than in degree:
   frequency bands. The graphic counterpart to the soft looks.
 - **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
+- **Ripple** — refraction through a moving water surface. A height field is built from summed
+  sines plus noise, the image is offset by its gradient, and the colour channels are split
+  slightly so the result disperses like water rather than blurring. Beats send rings outward.
+- **Ribbed** — fluted glass. Each rib is a cylindrical lens showing a compressed slice. Clarity is
+  deliberately uneven and drifts, so some of the image stays sharp while other parts dissolve —
+  near the glass versus further from it — and *which* parts are sharp is itself the animation.
+- **Marble** — domain-warped noise quantised into flat bands and mapped to the artwork's palette:
+  wide blobs, not fine veining. Beats drop new ink that pushes the pattern radially outward.
+- **Lens** — a grid of circles on a dark ground, each holding a fisheye view of the slice of image
+  behind it, with litho grain and saturation pulled back from neon.
+
+Eight is too many to cycle, so the look button opens a picker. Space still steps through.
 
 **Motion rate is almost independent of sustained loudness.** Music is loud continuously, so tying
 speed to level produces constant fast movement that reads as unrelated to the sound — it drowns out
@@ -43,6 +56,23 @@ the part that is actually reacting. Idle drift is very slow; transients do the m
 it moved away from, and the ground colour showing through reads as a hole punched in the artwork
 rather than as motion. Swirl scales its feedback by just enough to cover the frame's rotation;
 Poster draws two extra cells beyond each edge.
+
+### The shader layer
+
+`fx.js` renders to its own offscreen canvas, which `album.html` blits into the main 2D canvas — so
+grain, vignette and the HUD keep working unchanged. It caps its own resolution at 1280px wide:
+these are full-screen per-pixel passes and a phone does not need them at native retina density.
+
+If WebGL is unavailable the four shader looks are removed from the list at boot rather than left
+in place to render a blank screen.
+
+Two things worth knowing if you touch the shader:
+
+- **Normalise a height field before raising it to a power.** The caustic term started as
+  `pow(h*0.5+0.5, 6)` on an unnormalised `h` that reached 1.6 — `1.6^6` is 17, and whole regions
+  blew out to flat white.
+- **The gradient of a sum of sines runs to about 4**, so a refraction offset in the hundredths
+  already bends the image hard. At the tenths it stops being refraction and turns to soup.
 
 ## Video sources
 
