@@ -64,7 +64,7 @@ bend it as a texture in a fragment shader (`fx.js`).
   static print grain. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
 
-Eight is too many to cycle, so the look button opens a picker. Space still steps through.
+The look button opens a picker; space steps through the live looks, skipping hidden ones.
 
 **Motion rate is almost independent of sustained loudness.** Music is loud continuously, so tying
 speed to level produces constant fast movement that reads as unrelated to the sound — it drowns out
@@ -115,7 +115,7 @@ Two more things worth knowing if you touch the shader:
 
 Drop or pick a video instead of an image and it becomes the source. It is muted, looped, and
 played inline, its crushed copy is re-read every frame, and the palette is re-derived a few times
-a second so the colours follow the footage. Everything else — all eight looks — works unchanged.
+a second so the colours follow the footage. Everything else — every look — works unchanged.
 
 Object URLs are same-origin, so frames stay readable for colour sampling. Format support is the
 browser's: MP4 and MOV are the safe choices, and Safari will not play WebM.
