@@ -39,19 +39,24 @@ artwork on a 2D canvas; the last four bend it as a texture in a fragment shader 
 - **Ripple** — refraction through a moving water surface. A height field is built from summed
   sines plus noise, the image is offset by its gradient, and the colour channels are split
   slightly so the result disperses like water rather than blurring. Beats send rings outward.
-- **Ribbed** — fluted glass. Each rib is a cylindrical lens showing a compressed slice. Clarity is
-  deliberately uneven and drifts, so some of the image stays sharp while other parts dissolve —
-  near the glass versus further from it — and *which* parts are sharp is itself the animation.
+- **Ribbed** — fluted glass. Each rib is a real cylindrical lens: it shows a narrow strip of what
+  is behind it, magnified and **inverted**. The inversion is the tell — without it, something
+  moving behind slides the wrong way and the result reads as stripes rather than glass. Clarity is
+  deliberately uneven and drifts, so some of the image stays sharp while other parts dissolve, and
+  *which* parts are sharp is itself the animation.
 - **Marble** — irregular blobs on a field of the artwork's dominant colour, each ringed by a bled
-  black outline, sizes and density varying across the canvas. Beats swell nearby blobs outward like
-  spreading ink. Built from a signed-distance grid rather than flowing noise: the source reference
-  is structured and printed, and free-form marbling reads nothing like it. Two details carry it —
-  the black is an *outline around* each shape, not the gaps between them, and the ground is a
-  colour rather than black.
-- **Lens** — a grid of near-touching circles on a dark ground, each holding a fisheye view of the
-  image behind it, mapped through a riso duotone — grey through the midtones, palette colour at
-  the extremes — under coarse print grain sampled below pixel resolution so it clumps rather than
-  shimmers.
+  black outline, sizes and density varying across the canvas, with the artwork itself reading
+  through both blobs and ground. Beats swell nearby blobs outward like spreading ink. Built from a
+  signed-distance grid rather than flowing noise: the source reference is structured and printed,
+  and free-form marbling reads nothing like it. Three details carry it — the black is an *outline
+  around* each shape rather than the gaps between them, the ground is a colour rather than black,
+  and the field is evaluated across a 3×3 neighbourhood so blobs can grow past their own cell and
+  merge. Testing only the cell a pixel falls in clips every blob at the cell wall, which turns an
+  organic field into a sliced grid the moment anything grows.
+- **Lens** — a grid of large, near-touching circles on a dark ground, each holding a fisheye view
+  of the image behind it in the artwork's own colours, under coarse print grain sampled below
+  pixel resolution so it clumps rather than shimmers. A riso duotone was tried here and removed:
+  it read as a filter laid over the image rather than as the image itself.
 
 Eight is too many to cycle, so the look button opens a picker. Space still steps through.
 
