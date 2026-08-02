@@ -197,16 +197,12 @@ const FX = {
         // ================================================================
         else if (uMode == 2){
           float ar = uRes.x / max(uRes.y, 1.0);
-          // Loose columns of lozenges rather than free-flowing marbling:
-          // cells taller than they are wide, so blobs stack into vertical
-          // runs and the ground between them does structural work.
           float rows = 9.0;
           float cols = max(3.0, floor(rows * ar * 0.62));
           vec2 gp   = uv * vec2(cols, rows);
           vec2 cell = floor(gp);
           vec2 f    = fract(gp) - 0.5;
 
-          // A drop swells nearby blobs outward, like ink spreading.
           float swell = 0.0;
           for (int i = 0; i < 4; i++){
             if (uDrops[i].w > 0.5){
@@ -215,29 +211,39 @@ const FX = {
             }
           }
 
-          float r1 = hash(cell), r2 = hash(cell + 13.1);
+          float r1 = hash(cell), r2 = hash(cell + 13.1), r3 = hash(cell + 41.7);
           float ce = mix(uBass, uHigh, fract(r1 * 3.0));
 
-          vec2 hs = vec2(0.24 + r1 * 0.13, 0.27 + r2 * 0.22);
-          hs *= 1.0 + ce * 0.24 + uBeat * 0.20 + swell;
+          // Sizes vary hard and density drifts across the canvas, so the
+          // field is crowded in places and open in others rather than an
+          // even grid of near-identical shapes.
+          float density = fbm(uv * vec2(ar, 1.0) * 1.4 + 3.0);
+          vec2 hs = vec2(0.13 + r1 * 0.27, 0.15 + r2 * 0.34);
+          hs *= 0.55 + density * 0.95;
+          hs *= 1.0 + ce * 0.26 + uBeat * 0.20 + swell;
+          if (r3 > 0.86) hs *= 0.25;              // occasional near-empty cell
 
-          // Noise on the edge gives the ink-transfer roughness; a clean SDF
-          // reads as vector art, which the reference is emphatically not.
-          float rough = (fbm(uv * vec2(ar, 1.0) * 22.0 + uTime * 0.04) - 0.5) * 0.055;
-          float rad = 0.23;
+          float rough = (fbm(uv * vec2(ar, 1.0) * 11.0 + uTime * 0.030) - 0.5) * 0.14
+                      + (fbm(uv * vec2(ar, 1.0) * 26.0) - 0.5) * 0.045;
+          float rad = 0.19;
           vec2  d2  = abs(f) - hs + rad;
           float sdf = length(max(d2, 0.0)) + min(max(d2.x, d2.y), 0.0) - rad + rough;
 
-          // Vertically adjacent cells often share a colour, which is what
-          // makes them read as columns instead of confetti.
-          int band = int(mod(cell.x * 2.0 + floor(cell.y * 0.5), 5.0));
+          // The ground is the artwork's dominant colour, not black — the
+          // reference is a vivid blue field carrying the blobs. Black is an
+          // outline that haloes each shape, which is what gives the printed,
+          // ink-bled quality.
+          vec3 ground = palAt(0) * (0.86 + fbm(uv * 5.0) * 0.22);
+          int band = int(mod(cell.x * 2.0 + floor(cell.y * 0.5), 4.0)) + 1;
           vec3 ink = palAt(band);
-          ink = mix(ink, ink * vec3(0.78, 0.80, 0.84), 0.45);
+          ink = mix(ink, ink * vec3(0.80, 0.82, 0.86), 0.35);
           ink *= 0.88 + fbm(uv * 9.0) * 0.24;
 
-          float m = smoothstep(0.014, -0.014, sdf);
-          col = mix(vec3(0.030, 0.030, 0.040), ink, m);
-          col *= 0.86 + uLevel * 0.26;
+          float inHalo = smoothstep(0.150, 0.015, sdf);
+          float inBlob = smoothstep(0.020, -0.018, sdf);
+          col = mix(ground, vec3(0.022, 0.020, 0.028), inHalo);
+          col = mix(col, ink, inBlob);
+          col *= 0.88 + uLevel * 0.24;
         }
 
         // ================================================================
@@ -274,8 +280,9 @@ const FX = {
             // circles; the reference is muted in the middle and vivid only
             // where the ink pools.
             float l = dot(col, vec3(0.299, 0.587, 0.114));
+            float lp = l + (fbm(vUv * 6.0 + 11.0) - 0.5) * 0.22;
             vec3 duo = mix(palAt(int(band)), palAt(int(mod(band + 2.0, 5.0))),
-                           smoothstep(0.22, 0.78, l));
+                           smoothstep(0.22, 0.78, lp));
             col = mix(vec3(l * 0.92), duo, 0.62 + 0.38 * abs(l - 0.5) * 2.0);
             col *= 0.72 + 0.28 * pow(1.0 - r / pulse, 0.5);
             // Soft internal falloff so each circle reads as pooled ink
