@@ -136,7 +136,7 @@ const FX = {
           // Small on purpose. The gradient of a sum of sines runs to ~4, so
           // an offset in the hundredths already bends the image hard; at the
           // tenths it stops being refraction and becomes soup.
-          float amt = 0.0042 + uBass * 0.0115 + uBeat * 0.0070;
+          float amt = 0.0105 + uBass * 0.0260 + uBeat * 0.0150;
           vec2 off = grad * amt;
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -158,7 +158,7 @@ const FX = {
         // the glass versus further from it.
         // ================================================================
         else if (uMode == 1){
-          float cols = 22.0 + floor(uMid * 6.0);
+          float cols = 32.0 + floor(uMid * 8.0);
           float x    = uv.x * cols;
           float rib  = floor(x);
           float f    = fract(x) * 2.0 - 1.0;          // -1..1 across the flute
@@ -182,9 +182,12 @@ const FX = {
           col = softTex(suv, blur);
 
           // Edge shading on each flute gives the glass thickness.
-          float edge = 1.0 - pow(abs(f), 2.6) * 0.55;
+          float edge = 1.0 - pow(abs(f), 2.6) * 0.62;
           col *= edge;
-          col += pow(max(0.0, 1.0 - abs(f + 0.45) * 5.0), 3.0) * 0.10 * (0.4 + clarity);
+          // Two speculars per flute — a bright catch-light and a weaker
+          // return off the far curve. This is most of what sells it as glass.
+          col += pow(max(0.0, 1.0 - abs(f + 0.52) * 6.5), 2.2) * 0.30 * (0.35 + clarity);
+          col += pow(max(0.0, 1.0 - abs(f - 0.30) * 9.0), 3.0) * 0.12 * (0.35 + clarity);
         }
 
         // ================================================================
@@ -193,32 +196,48 @@ const FX = {
         // Beats drop new "ink" that pushes the pattern outward from a point.
         // ================================================================
         else if (uMode == 2){
-          vec2 p = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 2.2;
+          float ar = uRes.x / max(uRes.y, 1.0);
+          // Loose columns of lozenges rather than free-flowing marbling:
+          // cells taller than they are wide, so blobs stack into vertical
+          // runs and the ground between them does structural work.
+          float rows = 9.0;
+          float cols = max(3.0, floor(rows * ar * 0.62));
+          vec2 gp   = uv * vec2(cols, rows);
+          vec2 cell = floor(gp);
+          vec2 f    = fract(gp) - 0.5;
 
+          // A drop swells nearby blobs outward, like ink spreading.
+          float swell = 0.0;
           for (int i = 0; i < 4; i++){
             if (uDrops[i].w > 0.5){
-              vec2 d = p - uDrops[i].xy * vec2(2.2, 2.2);
-              float dist = max(length(d), 0.001);
-              float age  = uDrops[i].z;
-              // A drop displaces radially, strongest just after it lands.
-              float push = 0.55 * exp(-age * 0.9) / (1.0 + dist * dist * 2.5);
-              p += normalize(d) * push;
+              float d = length(uv - vec2(uDrops[i].x / 1.6, uDrops[i].y));
+              swell += exp(-d * 3.0) * exp(-uDrops[i].z * 1.1) * 0.34;
             }
           }
 
-          vec2 w = vec2(fbm(p + uTime * 0.020), fbm(p + 5.2 - uTime * 0.016));
-          float n = fbm(p + w * (1.5 + uLevel * 0.8));
+          float r1 = hash(cell), r2 = hash(cell + 13.1);
+          float ce = mix(uBass, uHigh, fract(r1 * 3.0));
 
-          // Few, wide steps -> blobs with flat interiors.
-          float steps = 5.0;
-          float q = floor(n * steps);
-          int idx = int(mod(q, 5.0));
-          col = palAt(idx);
+          vec2 hs = vec2(0.24 + r1 * 0.13, 0.27 + r2 * 0.22);
+          hs *= 1.0 + ce * 0.24 + uBeat * 0.20 + swell;
 
-          // Keep the band edges crisp but not aliased.
-          float edge = abs(fract(n * steps) - 0.5);
-          col *= 0.86 + smoothstep(0.0, 0.12, edge) * 0.14;
-          col *= 0.80 + uLevel * 0.32;
+          // Noise on the edge gives the ink-transfer roughness; a clean SDF
+          // reads as vector art, which the reference is emphatically not.
+          float rough = (fbm(uv * vec2(ar, 1.0) * 22.0 + uTime * 0.04) - 0.5) * 0.055;
+          float rad = 0.23;
+          vec2  d2  = abs(f) - hs + rad;
+          float sdf = length(max(d2, 0.0)) + min(max(d2.x, d2.y), 0.0) - rad + rough;
+
+          // Vertically adjacent cells often share a colour, which is what
+          // makes them read as columns instead of confetti.
+          int band = int(mod(cell.x * 2.0 + floor(cell.y * 0.5), 5.0));
+          vec3 ink = palAt(band);
+          ink = mix(ink, ink * vec3(0.78, 0.80, 0.84), 0.45);
+          ink *= 0.88 + fbm(uv * 9.0) * 0.24;
+
+          float m = smoothstep(0.014, -0.014, sdf);
+          col = mix(vec3(0.030, 0.030, 0.040), ink, m);
+          col *= 0.86 + uLevel * 0.26;
         }
 
         // ================================================================
@@ -235,7 +254,7 @@ const FX = {
 
           float r = length(f);
           float band = mod(cell.x + cell.y, 5.0);
-          float pulse = 0.66 + uBass * 0.13 + uBeat * 0.11
+          float pulse = 0.94 + uBass * 0.09 + uBeat * 0.08
                       + sin(uTime * 0.5 + (cell.x + cell.y) * 0.7) * 0.03;
 
           if (r > pulse){
@@ -247,19 +266,27 @@ const FX = {
             vec2 centre = (cell + 0.5) / grid;
             centre.x /= ar;
             vec2 suv = centre + warped * (0.5 / grid) * vec2(1.0 / ar, 1.0)
-                              * (1.5 + uBass * 0.35);
+                              * (2.6 + uBass * 0.55);
             col = tex(coverUV(suv));
 
-            // Saturated but not shouting, plus a rim shadow.
+            // Riso duotone: grey through the midtones, palette colour at
+            // the extremes. Straight saturation boosting gave garish
+            // circles; the reference is muted in the middle and vivid only
+            // where the ink pools.
             float l = dot(col, vec3(0.299, 0.587, 0.114));
-            col = mix(vec3(l), col, 1.18);
-            col *= 0.55 + 0.45 * pow(1.0 - r / pulse, 0.42);
-            col = mix(col, palAt(int(band)), 0.16);
+            vec3 duo = mix(palAt(int(band)), palAt(int(mod(band + 2.0, 5.0))),
+                           smoothstep(0.22, 0.78, l));
+            col = mix(vec3(l * 0.92), duo, 0.62 + 0.38 * abs(l - 0.5) * 2.0);
+            col *= 0.72 + 0.28 * pow(1.0 - r / pulse, 0.5);
+            // Soft internal falloff so each circle reads as pooled ink
+            // rather than a flat disc of colour.
+            col *= 0.84 + 0.30 * (1.0 - smoothstep(0.0, 1.0, r / pulse));
           }
 
-          // Litho grain.
-          float gr = hash(vUv * uRes + fract(uTime) * 91.7);
-          col += (gr - 0.5) * 0.085;
+          // Litho grain, coarse and heavy — sampled below pixel resolution
+          // so it clumps the way print grain does instead of shimmering.
+          float gr = hash(floor(vUv * uRes / 1.7) + floor(uTime * 12.0) * 3.3);
+          col += (gr - 0.5) * 0.20;
         }
 
         col = clamp(col, 0.0, 1.0);

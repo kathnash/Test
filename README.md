@@ -42,10 +42,14 @@ artwork on a 2D canvas; the last four bend it as a texture in a fragment shader 
 - **Ribbed** — fluted glass. Each rib is a cylindrical lens showing a compressed slice. Clarity is
   deliberately uneven and drifts, so some of the image stays sharp while other parts dissolve —
   near the glass versus further from it — and *which* parts are sharp is itself the animation.
-- **Marble** — domain-warped noise quantised into flat bands and mapped to the artwork's palette:
-  wide blobs, not fine veining. Beats drop new ink that pushes the pattern radially outward.
-- **Lens** — a grid of circles on a dark ground, each holding a fisheye view of the slice of image
-  behind it, with litho grain and saturation pulled back from neon.
+- **Marble** — lozenge blobs stacked in loose vertical columns with the dark ground doing
+  structural work between them, edges roughened by noise for an ink-transfer feel. Beats swell
+  nearby blobs outward like spreading ink. Built from a signed-distance grid, not flowing noise:
+  the reference is structured and columnar, and free-form marbling reads nothing like it.
+- **Lens** — a grid of near-touching circles on a dark ground, each holding a fisheye view of the
+  image behind it, mapped through a riso duotone — grey through the midtones, palette colour at
+  the extremes — under coarse print grain sampled below pixel resolution so it clumps rather than
+  shimmers.
 
 Eight is too many to cycle, so the look button opens a picker. Space still steps through.
 
