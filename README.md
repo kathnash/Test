@@ -36,8 +36,10 @@ bend it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
 - **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
-  blocks. **How many appear is the animation**: a sparse tenth of the most distinctive cells in
-  near-silence, the whole composition at peak. Cells are chosen by *rank*, not by a fixed strength
+  blocks. **How many appear is the animation**: about 5% of the most distinctive cells in
+  near-silence, 28% at half level, 73% at peak. The curve is concave and stops short of full, so it
+  holds the sparse state that reads best rather than filling at the first loud passage. Cells are
+  chosen by *rank*, not by a fixed strength
   threshold — thresholding on the value left a gradient with one small subject empty at a level
   that filled a busy cover completely. Each cell keeps both its nearest palette colour and its true
   colour, blended by `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture). Rows shear apart
@@ -108,7 +110,7 @@ Anything the eye treats as a static structure has to be a constant; drive what s
 instead. Grain had the same problem in time: resampling on `floor(uTime * 12.0)` is a 12Hz strobe,
 not grain.
 
-Two more things worth knowing if you touch the shader:
+Three more things worth knowing if you touch the shader:
 
 - **Normalise a height field before raising it to a power.** The caustic term started as
   `pow(h*0.5+0.5, 6)` on an unnormalised `h` that reached 1.6 — `1.6^6` is 17, and whole regions
