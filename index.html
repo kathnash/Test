@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Resonate">
 <title>Resonate — sound reactive visuals</title>
 <style>
   :root{
@@ -420,10 +422,42 @@ document.getElementById('palette').onclick = e => {
   pal = (pal + 1) % PALETTES.length;
   e.target.textContent = PALETTES[pal].name;
 };
-document.getElementById('full').onclick = () => {
-  if (!document.fullscreenElement) (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
-  else document.exitFullscreen();
-};
+/* iPhone Safari implements no Fullscreen API whatsoever — only <video>
+   elements can go fullscreen there. iPad and desktop Safari do support it.
+   The previous code read
+       (el.requestFullscreen || el.webkitRequestFullscreen).call(el)
+   which on iPhone is `undefined.call(...)` and threw on every tap, so the
+   button was not merely inert, it was broken.
+
+   Where there is no API, the honest alternative is Add to Home Screen: iOS
+   launches that in standalone mode with no browser chrome, which is the
+   full-screen experience the button is really promising. */
+const fullBtn = document.getElementById('full');
+const rootEl = document.documentElement;
+const fsEnter = rootEl.requestFullscreen || rootEl.webkitRequestFullscreen || null;
+const fsExit  = document.exitFullscreen || document.webkitExitFullscreen || null;
+const fsActive = () => document.fullscreenElement || document.webkitFullscreenElement;
+const standalone = window.navigator.standalone === true ||
+                   (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+if (standalone) {
+  fullBtn.remove();                       // already running without chrome
+} else if (!fsEnter) {
+  fullBtn.onclick = () => hintHomeScreen();
+} else {
+  fullBtn.onclick = () => {
+    try {
+      if (!fsActive()) fsEnter.call(rootEl);
+      else if (fsExit) fsExit.call(document);
+    } catch (e) { hintHomeScreen(); }
+  };
+}
+
+function hintHomeScreen() {
+  fullBtn.textContent = 'Share → Add to Home Screen';
+  clearTimeout(hintHomeScreen._t);
+  hintHomeScreen._t = setTimeout(() => { fullBtn.textContent = 'Fullscreen'; }, 4500);
+}
 document.getElementById('restart').onclick = () => {
   A.stop();
   hud.classList.remove('show');

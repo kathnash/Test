@@ -91,6 +91,18 @@ when switching away from a shader look. Its backing store is capped at 760px on 
 elsewhere; these are fragment-bound passes and nothing visible is gained by rendering them at full
 retina density.
 
+### Full screen
+
+iPhone Safari implements no Fullscreen API at all — only `<video>` elements can go fullscreen
+there. iPad and desktop Safari do support it. The button feature-detects and, where there is no
+API, points at Add to Home Screen instead: iOS launches that in standalone mode with no browser
+chrome, which is the experience the button is really promising. Both pages carry the meta tags
+that make that launch full-bleed, and the button removes itself when already running standalone.
+
+Worth knowing if you touch this: the original code was
+`(el.requestFullscreen || el.webkitRequestFullscreen).call(el)`, which on iPhone is
+`undefined.call(...)` — so the button did not fail quietly, it threw on every tap.
+
 ### Cost
 
 A full-screen 60fps visualiser will warm a phone — the GPU and display are held at full power for
