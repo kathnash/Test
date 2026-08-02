@@ -20,7 +20,7 @@ const FX = {
   canvas: null, gl: null, prog: null, tex: null, u: {}, ok: false,
   texAspect: 1, sized: [0, 0],
 
-  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3 },
+  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4 },
 
   init(canvasEl) {
     if (this.ok) return true;
@@ -47,6 +47,8 @@ const FX = {
       uniform float uTime;
       uniform float uPhase;   // integrated, not uTime * rate
       uniform float uSwell;   // slow envelope for refraction depth
+      uniform float uLumLo, uLumHi;  // source's 8th/92nd luminance percentiles
+      uniform float uMedNorm;        // its median within that range
       uniform int   uMode;
       uniform float uBass, uMid, uHigh, uLevel, uBeat;
       uniform vec3  uPal[5];
@@ -300,7 +302,7 @@ const FX = {
         // a fisheye view of the slice of image behind it. Grain and a pulled
         // -back saturation give it the litho feel.
         // ================================================================
-        else {
+        else if (uMode == 3) {
           float grid = 5.0;                 // fixed: a floor() here snapped the
                                             // whole grid to a new size on transients
           float ar   = uRes.x / max(uRes.y, 1.0);
@@ -354,6 +356,74 @@ const FX = {
           col += (gr - 0.5) * 0.20;
         }
 
+        // ================================================================
+        // 4 — CYANOTYPE. A contact print: luminance mapped onto a Prussian
+        // blue to paper-white ramp, on heavy fibre, with the exposure
+        // threshold and the edge softness both driven by the music.
+        // ================================================================
+        else {
+          // Very slow wander so a still image is never completely static.
+          vec2 drift = vec2(sin(uTime * 0.033), cos(uTime * 0.026)) * 0.012;
+          vec3 src = tex(coverUV(uv + drift));
+          float lum = dot(src, vec3(0.299, 0.587, 0.114));
+
+          // Uneven hand-coating: the emulsion is brushed on, so sensitivity
+          // varies across the sheet. Without this the blue is a flat fill and
+          // the whole thing reads as a colour filter rather than a print.
+          // Stretched to the image's own range, so the threshold below has the
+          // same room to work with on a dark cover as on a bright one.
+          lum = clamp((lum - uLumLo) / max(0.04, uLumHi - uLumLo), 0.0, 1.0);
+
+          float coat = fbm(uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 2.2 + 4.0);
+          lum += (coat - 0.5) * 0.13;
+
+          // A photogram has no inherent polarity when the input is an
+          // arbitrary picture: what should stay paper white is whatever the
+          // object was, and an image does not say. The rule that always gives
+          // the reference's character — deep blue field, luminous forms — is
+          // that the GROUND exposes to blue and the subject stays pale. The
+          // ground is whatever tone the image is mostly made of, so the
+          // polarity follows the median rather than being fixed.
+          float pol = uMedNorm > 0.5 ? 1.0 : -1.0;
+          float bloom = uSwell * 0.16 + uBeat * 0.06;
+
+          // Where the object lay flat against the paper the edge is crisp;
+          // where it lifted away the light crept under and the edge went
+          // soft. That variation is most of what makes a photogram read as
+          // one, and it drifts, so which edges are sharp keeps changing.
+          float contact = fbm(uv * 3.4 + uTime * 0.025 + 17.0);
+          float soft = mix(0.04, 0.24, contact) * (0.75 + uMid * 0.45);
+
+          // Placed a full transition width beyond the median so the ground is
+          // solidly exposed rather than sitting inside the soft edge. Louder
+          // music walks it back toward the median and the pale forms bloom.
+          float expo = uMedNorm + pol * (bloom - soft - 0.06);
+
+          float s0 = smoothstep(expo - soft, expo + soft, lum);
+          float v = pol > 0.0 ? s0 : 1.0 - s0;                  // 1 = fully exposed
+
+          vec3 paper = vec3(0.878, 0.918, 0.965);
+          vec3 pale  = vec3(0.596, 0.729, 0.867);
+          vec3 blue  = vec3(0.114, 0.208, 0.545);
+          vec3 deep  = vec3(0.063, 0.094, 0.325);
+
+          if (v < 0.34)      col = mix(paper, pale, v / 0.34);
+          else if (v < 0.72) col = mix(pale,  blue, (v - 0.34) / 0.38);
+          else               col = mix(blue,  deep, (v - 0.72) / 0.28);
+
+          // Paper fibre. Static, and heaviest in the blue, exactly as the
+          // pigment settles into the texture of the sheet.
+          float fib = hash(floor(vUv * uRes / 1.35));
+          col += (fib - 0.5) * (0.055 + v * 0.11);
+          float fib2 = fbm(vUv * uRes / 26.0);
+          col *= 0.955 + fib2 * 0.09;
+
+          // Slight halo where pale meets blue, from light spreading in the
+          // wet emulsion.
+          float halo = 1.0 - abs(v - 0.34) * 3.4;
+          col += max(0.0, halo) * 0.05;
+        }
+
         col = clamp(col, 0.0, 1.0);
         gl_FragColor = vec4(col, 1.0);
       }`;
@@ -387,7 +457,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uMode','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uMode','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -457,6 +527,9 @@ const FX = {
     gl.uniform1f(this.u.uTime, p.time);
     gl.uniform1f(this.u.uPhase, p.phase);
     gl.uniform1f(this.u.uSwell, p.swell);
+    gl.uniform1f(this.u.uLumLo, p.lumLo);
+    gl.uniform1f(this.u.uLumHi, p.lumHi);
+    gl.uniform1f(this.u.uMedNorm, p.medianNorm);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);

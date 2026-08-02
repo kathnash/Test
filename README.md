@@ -71,7 +71,25 @@ bend it as a texture in a fragment shader (`fx.js`).
   decoration rather than as reactive. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
 
+- **Cyanotype** — a contact print: deep Prussian blue field, luminous pale forms, heavy paper fibre
+  and an unevenly brushed coating. Exposure and edge softness both follow the music, so the pale
+  shapes bloom and their edges travel between crisp and dissolved.
+
 The look button opens a picker; space steps through the live looks, skipping hidden ones.
+
+### Cyanotype's two decisions
+
+A photogram has **no inherent polarity** when the input is an arbitrary picture. What should stay
+paper white is whatever object lay on the sheet, and an image does not say. The rule that always
+produces the reference's character — deep blue field, luminous forms — is that the *ground* exposes
+to blue and the subject stays pale, so polarity follows the image's median tone rather than being
+fixed. A dark cover and a bright one then land in the same aesthetic instead of one coming out as
+the negative of the other.
+
+Luminance is also **stretched to the image's own percentile range** before thresholding. An
+absolute threshold has almost no room on a dark image: its ground sits near zero, the soft
+transition band is wider than the space beneath it, and the ground can never read as fully exposed
+no matter where the threshold goes.
 
 **Motion rate is almost independent of sustained loudness.** Music is loud continuously, so tying
 speed to level produces constant fast movement that reads as unrelated to the sound — it drowns out
