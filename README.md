@@ -26,11 +26,32 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
-Three looks, deliberately different in kind rather than in degree:
+Four looks, deliberately different in kind rather than in degree:
 
 - **Drift** — calm ambient colour fields
+- **Poster** — the artwork quantised to a coarse grid, each cell snapped to its nearest extracted
+  colour and drawn as flat hard-edged blocks with smoothing off. Rows shear apart along different
+  frequency bands. The graphic counterpart to the soft looks.
 - **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
+
+**Motion rate is almost independent of sustained loudness.** Music is loud continuously, so tying
+speed to level produces constant fast movement that reads as unrelated to the sound — it drowns out
+the part that is actually reacting. Idle drift is very slow; transients do the moving.
+
+**Any layer that moves has to overscan.** A rotated or displaced layer no longer covers the region
+it moved away from, and the ground colour showing through reads as a hole punched in the artwork
+rather than as motion. Swirl scales its feedback by just enough to cover the frame's rotation;
+Poster draws two extra cells beyond each edge.
+
+## Video sources
+
+Drop or pick a video instead of an image and it becomes the source. It is muted, looped, and
+played inline, its crushed copy is re-read every frame, and the palette is re-derived a few times
+a second so the colours follow the footage. Everything else — all four looks — works unchanged.
+
+Object URLs are same-origin, so frames stay readable for colour sampling. Format support is the
+browser's: MP4 and MOV are the safe choices, and Safari will not play WebM.
 
 **Sensitivity** (low / mid / high) is a control rather than a fixed default, because the right
 value depends on how loud the room is and how far the device is from the speaker. It uses a soft
