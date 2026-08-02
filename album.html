@@ -590,7 +590,7 @@ function drawPoster(dt) {
   // Fraction of cells to draw, from a sparse handful in near-silence to the
   // full composition at peak.
   const fill = resp(A.level);
-  const frac = Math.min(1, 0.10 + fill * 0.80 + A.beat * 0.14);
+  const frac = Math.min(0.94, 0.045 + Math.pow(fill, 1.55) * 0.68 + A.beat * 0.10);
   const sorted = POSTER.sorted;
   const cut = frac >= 0.999 ? -1 : sorted[Math.min(sorted.length - 1,
                 Math.floor((1 - frac) * sorted.length))];
@@ -619,10 +619,14 @@ function drawPoster(dt) {
       const pb = pal[2] + (POSTER.rgb[idx*3 + 2] - pal[2]) * k;
       // Blocks grow toward their neighbours on transients and open up gaps
       // of the ground colour when the music is quiet.
-      const grow = (0.55 + ease * 0.45) * (1 + e * 0.28 + A.beat * 0.45);
+      const grow = (0.50 + ease * 0.55) * (1 + e * 0.28 + A.beat * 0.45);
       const bw = cw * grow, bh = ch * grow;
+      const lx = c * cw + shove - (bw - cw) / 2;
+      const ly = r * ch - (bh - ch) / 2;
+      const x0 = Math.round(lx), y0 = Math.round(ly);
+      const x1 = Math.round(lx + bw), y1 = Math.round(ly + bh);
       g.fillStyle = `rgb(${pr|0},${pg|0},${pb|0})`;
-      g.fillRect(c * cw + shove - (bw - cw) / 2, r * ch - (bh - ch) / 2, bw + 1, bh + 1);
+      g.fillRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
     }
   }
   g.imageSmoothingEnabled = true;
@@ -630,7 +634,7 @@ function drawPoster(dt) {
 
 function drawFX(cfg) {
   FX.render({
-    time, mode: FX.MODES[cfg.fx],
+    time, phase: ripplePhase, mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
     level: resp(A.level), beat: A.beat,
     palette: ART.palette.length ? ART.palette : [[120,120,140]],
@@ -770,6 +774,9 @@ const GRAIN = (() => {
 })();
 
 let last = performance.now(), videoClock = 0;
+// Integrated separately from `time` so the ripple surface can change speed
+// without its phase jumping.
+let ripplePhase = 0;
 let hidden = false;
 document.addEventListener('visibilitychange', () => {
   hidden = document.hidden;
@@ -804,6 +811,7 @@ function frame(now) {
   }
 
   updateDrops(dt);
+  ripplePhase += dt * (0.14 + resp(A.level) * 0.34);
   if (LOOKS[look].fx) { drawFX(LOOKS[look]); requestAnimationFrame(frame); return; }
   updateBlobs(dt);
   drawScene(dt);

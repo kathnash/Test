@@ -115,6 +115,10 @@ Two more things worth knowing if you touch the shader:
   blew out to flat white.
 - **The gradient of a sum of sines runs to about 4**, so a refraction offset in the hundredths
   already bends the image hard. At the tenths it stops being refraction and turns to soup.
+- **Integrate a rate; never multiply time by it.** Ripple's surface speed follows the music, and
+  writing `uTime * rate(t)` displaces the entire waveform the instant the rate changes — the water
+  jumped rather than speeding up. Phase is accumulated on the CPU (`phase += dt * rate`) and passed
+  in as its own uniform.
 
 ## Video sources
 
@@ -229,6 +233,12 @@ approach.
   constant pins near 1.0 and stops moving: punchy tracks looked reactive and smooth ones looked
   like a random animation. Measured over 25s of synthetic signal, a sustained pad moved through a
   range of 0.096 under peak-only and 0.611 under the blend, while a kick pattern was unchanged.
+- An **envelope follower** on each band: ~45ms attack so transients still land, ~220ms release so
+  the result glides. Dividing by the running deviation is what gives quiet music its range, but it
+  also multiplies the FFT's own frame-to-frame noise by 1/sd — on ambient material, where the
+  deviation is genuinely tiny, that turned into jitter. A deviation floor caps the gain and the
+  follower smooths what remains. Measured on a pad with realistic frame noise: jitter per frame
+  0.0177 under peak-only, 0.0060 with the follower, while usable range went from 0.141 to 0.583.
 - A presence gate so near-silence reads as still rather than as amplified room tone
 - **Onsets from spectral flux** — the summed positive change across the whole spectrum — against a
   threshold that rides on the local mean plus a multiple of the local spread. Watching only low-band

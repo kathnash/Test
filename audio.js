@@ -23,6 +23,7 @@ const A = {
   _stat: { bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
            air:{mu:0,sd:.02}, level:{mu:0,sd:.02} },
   _prevSpec: null, _fluxHist: [],
+  _env: { bass:0, mid:0, high:0, air:0, level:0 },
   presence: 0,
 
   async start(kind) {
@@ -164,9 +165,22 @@ const A = {
     const a = 1 - Math.exp(-dt / 1.6);          // ~1.6s adaptation
     s.mu += (raw - s.mu) * a;
     s.sd += (Math.abs(raw - s.mu) - s.sd) * a;
-    const sd = Math.max(s.sd, 0.0035);          // floor stops silence amplifying
+
+    // The floor matters more than it looks. Dividing by the deviation is what
+    // gives quiet music its range, but it also multiplies the FFT's own
+    // frame-to-frame noise by 1/sd — so on ambient material, where sd is
+    // genuinely tiny, the output turned to jitter. The floor caps that gain.
+    const sd = Math.max(s.sd, 0.010);
     const rel = Math.min(1, Math.max(0, 0.5 + (raw - s.mu) / (4.0 * sd)));
-    return rel * 0.58 + this._norm(key, raw) * 0.42;
+    const v = rel * 0.58 + this._norm(key, raw) * 0.42;
+
+    // Envelope follower: rise quickly so transients still land, fall slowly so
+    // the result glides instead of flickering. A symmetric smoother would have
+    // to be slow in both directions and would blunt every hit.
+    const e = this._env;
+    const tau = v > e[key] ? 0.045 : 0.22;
+    e[key] += (v - e[key]) * (1 - Math.exp(-dt / tau));
+    return e[key];
   },
 
   // Auto-gain: track a slowly-decaying peak per band and normalise against
@@ -265,6 +279,7 @@ const A = {
       beat:0, beatFlash:0, bpm:0, _hist:[], _beatTimes:[],
       _prevSpec:null, _fluxHist:[],
       _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 },
+      _env:{ bass:0, mid:0, high:0, air:0, level:0 },
       _stat:{ bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
               air:{mu:0,sd:.02}, level:{mu:0,sd:.02} }
     });

@@ -45,6 +45,7 @@ const FX = {
       uniform vec2  uRes;
       uniform float uTexAspect;
       uniform float uTime;
+      uniform float uPhase;   // integrated, not uTime * rate
       uniform int   uMode;
       uniform float uBass, uMid, uHigh, uLevel, uBeat;
       uniform vec3  uPal[5];
@@ -138,8 +139,10 @@ const FX = {
         // slightly so colour disperses instead of blurring.
         // ================================================================
         if (uMode == 0){
-          // Surface speed follows the music too, so quiet passages drift.
-          float t = uTime * (0.14 + uLevel * 0.34);
+          // Phase is integrated on the CPU. Writing uTime * rate(t) means that
+          // every change in rate instantly displaces the whole waveform — the
+          // surface jumps rather than speeding up.
+          float t = uPhase;
           vec2 p = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0);
 
           float e  = 0.004;
@@ -379,7 +382,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uMode','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uMode','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -447,6 +450,7 @@ const FX = {
     gl.uniform2f(this.u.uRes, this.sized[0], this.sized[1]);
     gl.uniform1f(this.u.uTexAspect, this.texAspect);
     gl.uniform1f(this.u.uTime, p.time);
+    gl.uniform1f(this.u.uPhase, p.phase);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);
