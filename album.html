@@ -811,7 +811,7 @@ function frame(now) {
   }
 
   updateDrops(dt);
-  ripplePhase += dt * (0.14 + resp(A.level) * 0.34);
+  ripplePhase += dt * (0.30 + resp(A.level) * 0.14);
   if (LOOKS[look].fx) { drawFX(LOOKS[look]); requestAnimationFrame(frame); return; }
   updateBlobs(dt);
   drawScene(dt);

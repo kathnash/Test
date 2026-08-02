@@ -85,10 +85,8 @@ const FX = {
         float h  = sin(p.x * 7.0 + t * 1.10) * 0.50;
               h += sin(p.y * 5.3 - t * 0.85) * 0.45;
               h += sin((p.x + p.y) * 9.4 + t * 0.65) * 0.30;
-        // The fine, fast octave is what reads as frantic in near-silence.
-        // Broad swells stay; detail only arrives with the music.
-              h += sin(p.x * 17.0 - t * 1.7) * (0.03 + uLevel * 0.28);
-              h += (fbm(p * 2.1 + t * 0.25) - 0.5) * (0.35 + uLevel * 0.70);
+              h += sin(p.x * 17.0 - t * 1.7) * 0.16;
+              h += (fbm(p * 2.1 + t * 0.25) - 0.5) * 0.90;
         for (int i = 0; i < 4; i++){
           if (uDrops[i].w > 0.5){
             float d = distance(p, uDrops[i].xy);
@@ -154,7 +152,7 @@ const FX = {
           // Small on purpose. The gradient of a sum of sines runs to ~4, so
           // an offset in the hundredths already bends the image hard; at the
           // tenths it stops being refraction and becomes soup.
-          float amt = 0.0045 + uBass * 0.0300 + uBeat * 0.0180;
+          float amt = 0.0035 + uBass * 0.0300 + uBeat * 0.0160;
           vec2 off = grad * amt;
 
           // Chromatic dispersion keeps it reading as refraction, not blur.

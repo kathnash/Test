@@ -22,8 +22,14 @@ const A = {
   _peak: { bass:.01, mid:.01, high:.01, air:.01, level:.01 },
   _stat: { bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
            air:{mu:0,sd:.02}, level:{mu:0,sd:.02} },
-  _prevSpec: null, _fluxHist: [],
+  _prevSpec: null, _fluxHist: [], _beatRaw: 0,
+  // Envelope shaping. Attack keeps transients legible, release stops the
+  // fall from flickering, and the second glide stage removes the velocity
+  // kink where the follower switches between the two.
+  SD_FLOOR: 0.012,
+  ENV_ATTACK: 0.035, ENV_RELEASE: 0.28, ENV_GLIDE: 0.09,
   _env: { bass:0, mid:0, high:0, air:0, level:0 },
+  _env2: { bass:0, mid:0, high:0, air:0, level:0 },
   presence: 0,
 
   async start(kind) {
@@ -33,7 +39,7 @@ const A = {
 
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 2048;
-    this.analyser.smoothingTimeConstant = 0.72;
+    this.analyser.smoothingTimeConstant = 0.84;
     this.analyser.minDecibels = -95;
     this.analyser.maxDecibels = -12;
 
@@ -170,17 +176,18 @@ const A = {
     // gives quiet music its range, but it also multiplies the FFT's own
     // frame-to-frame noise by 1/sd — so on ambient material, where sd is
     // genuinely tiny, the output turned to jitter. The floor caps that gain.
-    const sd = Math.max(s.sd, 0.010);
+    const sd = Math.max(s.sd, this.SD_FLOOR);
     const rel = Math.min(1, Math.max(0, 0.5 + (raw - s.mu) / (4.0 * sd)));
     const v = rel * 0.58 + this._norm(key, raw) * 0.42;
 
     // Envelope follower: rise quickly so transients still land, fall slowly so
     // the result glides instead of flickering. A symmetric smoother would have
     // to be slow in both directions and would blunt every hit.
-    const e = this._env;
-    const tau = v > e[key] ? 0.045 : 0.22;
+    const e = this._env, e2 = this._env2;
+    const tau = v > e[key] ? this.ENV_ATTACK : this.ENV_RELEASE;
     e[key] += (v - e[key]) * (1 - Math.exp(-dt / tau));
-    return e[key];
+    e2[key] += (e[key] - e2[key]) * (1 - Math.exp(-dt / this.ENV_GLIDE));
+    return e2[key];
   },
 
   // Auto-gain: track a slowly-decaying peak per band and normalise against
@@ -254,7 +261,7 @@ const A = {
     const now = performance.now();
     if (flux > thresh && this.presence > 0.25 && now - this._lastBeat > 150) {
       this._lastBeat = now;
-      this.beat = 1;
+      this._beatRaw = 1;      // sharp, for triggers
       this.beatFlash = 1;
       this._beatTimes.push(now);
       if (this._beatTimes.length > 12) this._beatTimes.shift();
@@ -266,8 +273,13 @@ const A = {
         if (med > 250 && med < 1400) this.bpm = Math.round(60000 / med);
       }
     }
-    this.beat      = Math.max(0, this.beat      - dt * 2.6);
+    // beatFlash stays sharp — things like ink drops and colour flips want an
+    // instantaneous trigger. `beat` is used as a continuous amount, and
+    // slamming it to 1 put a hard step into anything sized by it (the Lens
+    // circles most visibly), so it chases the sharp value instead.
+    this._beatRaw  = Math.max(0, this._beatRaw  - dt * 2.6);
     this.beatFlash = Math.max(0, this.beatFlash - dt * 5.5);
+    this.beat += (this._beatRaw - this.beat) * (1 - Math.exp(-dt / 0.10));
   },
 
   stop() {
@@ -276,10 +288,11 @@ const A = {
     if (this.ctx) this.ctx.close();
     Object.assign(this, {
       ctx:null, stream:null, osc:null, ready:false, presence:0,
-      beat:0, beatFlash:0, bpm:0, _hist:[], _beatTimes:[],
+      beat:0, beatFlash:0, bpm:0, _beatRaw:0, _hist:[], _beatTimes:[],
       _prevSpec:null, _fluxHist:[],
       _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 },
       _env:{ bass:0, mid:0, high:0, air:0, level:0 },
+      _env2:{ bass:0, mid:0, high:0, air:0, level:0 },
       _stat:{ bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
               air:{mu:0,sd:.02}, level:{mu:0,sd:.02} }
     });

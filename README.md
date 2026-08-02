@@ -121,6 +121,10 @@ Three more things worth knowing if you touch the shader:
   writing `uTime * rate(t)` displaces the entire waveform the instant the rate changes — the water
   jumped rather than speeding up. Phase is accumulated on the CPU (`phase += dt * rate`) and passed
   in as its own uniform.
+- **Modulate what a field does, not what it is.** Scaling the individual terms *inside* the water
+  height field by the audio level changes the shape of the surface as the music moves, so it morphs
+  instead of flowing. The wave structure is constant; the level drives `amt`, the refraction
+  strength, which scales the whole field uniformly and reads as depth rather than as warping.
 
 ## Video sources
 
@@ -235,12 +239,19 @@ approach.
   constant pins near 1.0 and stops moving: punchy tracks looked reactive and smooth ones looked
   like a random animation. Measured over 25s of synthetic signal, a sustained pad moved through a
   range of 0.096 under peak-only and 0.611 under the blend, while a kick pattern was unchanged.
-- An **envelope follower** on each band: ~45ms attack so transients still land, ~220ms release so
-  the result glides. Dividing by the running deviation is what gives quiet music its range, but it
-  also multiplies the FFT's own frame-to-frame noise by 1/sd — on ambient material, where the
-  deviation is genuinely tiny, that turned into jitter. A deviation floor caps the gain and the
-  follower smooths what remains. Measured on a pad with realistic frame noise: jitter per frame
-  0.0177 under peak-only, 0.0060 with the follower, while usable range went from 0.141 to 0.583.
+- A **two-stage envelope follower** on each band (`ENV_ATTACK` / `ENV_RELEASE` / `ENV_GLIDE`).
+  Dividing by the running deviation is what gives quiet music its range, but it also multiplies the
+  FFT's own frame-to-frame noise by 1/sd — on ambient material, where the deviation is genuinely
+  tiny, that turned into jitter. A deviation floor caps the gain; an asymmetric follower (fast
+  attack, slow release) smooths what remains; and a second symmetric glide stage removes the
+  velocity kink where the follower switches direction. One pole alone is continuous in value but
+  not in slope, and that corner is what still read as a jolt. On a pad with realistic frame noise,
+  jitter per frame is 0.0177 under peak-only and 0.0035 here, with usable range up from 0.141 to
+  0.566.
+- `beat` is a **followed** value, not a hard set. Slamming it to 1 on each onset put a step of ~0.96
+  into a single frame, and anything sized by it — the Lens circles most visibly — popped. It now
+  chases the sharp internal value, cutting the worst frame-to-frame step to 0.147. `beatFlash`
+  stays instantaneous, because triggers want an edge.
 - A presence gate so near-silence reads as still rather than as amplified room tone
 - **Onsets from spectral flux** — the summed positive change across the whole spectrum — against a
   threshold that rides on the local mean plus a multiple of the local spread. Watching only low-band
