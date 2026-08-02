@@ -20,6 +20,10 @@ const A = {
 
   _hist: [], _lastBeat: 0, _beatTimes: [],
   _peak: { bass:.01, mid:.01, high:.01, air:.01, level:.01 },
+  _stat: { bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
+           air:{mu:0,sd:.02}, level:{mu:0,sd:.02} },
+  _prevSpec: null, _fluxHist: [],
+  presence: 0,
 
   async start(kind) {
     const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -144,6 +148,27 @@ const A = {
     return sum / ((hi - lo + 1) * 255);
   },
 
+  /* Peak normalisation alone has a serious failure mode: it divides by a
+     decaying maximum, so a band that stays roughly constant sits pinned near
+     1.0 and never moves. Punchy tracks look reactive; smooth or ambient ones
+     look like a random animation with music happening nearby.
+
+     So each band is also measured against its OWN recent behaviour — how far
+     above or below its running mean it currently sits, scaled by how much it
+     normally varies. A quiet track with small fluctuations has a small
+     deviation, so those small fluctuations still fill the range. The two
+     measures are blended: relative for reactivity, absolute so loud passages
+     still read as louder. */
+  _react(key, raw, dt) {
+    const s = this._stat[key];
+    const a = 1 - Math.exp(-dt / 1.6);          // ~1.6s adaptation
+    s.mu += (raw - s.mu) * a;
+    s.sd += (Math.abs(raw - s.mu) - s.sd) * a;
+    const sd = Math.max(s.sd, 0.0035);          // floor stops silence amplifying
+    const rel = Math.min(1, Math.max(0, 0.5 + (raw - s.mu) / (4.0 * sd)));
+    return rel * 0.58 + this._norm(key, raw) * 0.42;
+  },
+
   // Auto-gain: track a slowly-decaying peak per band and normalise against
   // it. This is why quiet phone speakers and loud PA systems both look
   // right without the user touching a sensitivity slider.
@@ -165,11 +190,16 @@ const A = {
     const rawAir  = this._band(5000, 14000);
     const rawLvl  = (rawBass + rawMid + rawHigh + rawAir) / 4;
 
-    this.bass  = this._norm('bass',  rawBass);
-    this.mid   = this._norm('mid',   rawMid);
-    this.high  = this._norm('high',  rawHigh);
-    this.air   = this._norm('air',   rawAir);
-    this.level = this._norm('level', rawLvl);
+    // Near-silence should read as still, not as amplified noise: the
+    // relative measure would otherwise make room tone look like music.
+    const target = Math.min(1, Math.max(0, (rawLvl - 0.004) / 0.020));
+    this.presence += (target - this.presence) * (1 - Math.exp(-dt / 0.35));
+
+    this.bass  = this._react('bass',  rawBass, dt) * this.presence;
+    this.mid   = this._react('mid',   rawMid,  dt) * this.presence;
+    this.high  = this._react('high',  rawHigh, dt) * this.presence;
+    this.air   = this._react('air',   rawAir,  dt) * this.presence;
+    this.level = this._react('level', rawLvl,  dt) * this.presence;
 
     this.silentFor = rawLvl < 0.004 ? this.silentFor + dt : 0;
 
@@ -180,12 +210,35 @@ const A = {
     const c = den > 0 ? (num / den) / this.freq.length : 0.25;
     this.centroid += (Math.min(1, c * 3.2) - this.centroid) * 0.06;
 
-    // Onset detection on the low band against a rolling local average.
-    this._hist.push(rawBass);
-    if (this._hist.length > 60) this._hist.shift();
-    const avg = this._hist.reduce((a, b) => a + b, 0) / this._hist.length;
+    /* Onsets from spectral flux — the summed positive change across the
+       whole spectrum — rather than from low-band energy. Watching only the
+       bass finds nothing in acoustic, vocal or ambient material, which is
+       precisely the music that looked unreactive. Flux fires on a plucked
+       string or a vocal entry as readily as on a kick. */
+    let flux = 0;
+    const top = Math.floor(this.freq.length * 0.75);
+    if (this._prevSpec) {
+      for (let i = 2; i < top; i++) {
+        const d = this.freq[i] - this._prevSpec[i];
+        if (d > 0) flux += d;
+      }
+      flux /= (top * 255);
+    }
+    if (!this._prevSpec) this._prevSpec = new Uint8Array(this.freq.length);
+    this._prevSpec.set(this.freq);
+
+    this._fluxHist.push(flux);
+    if (this._fluxHist.length > 45) this._fluxHist.shift();
+    const fMean = this._fluxHist.reduce((a, b) => a + b, 0) / this._fluxHist.length;
+    let fVar = 0;
+    for (const v of this._fluxHist) fVar += (v - fMean) * (v - fMean);
+    const fSd = Math.sqrt(fVar / Math.max(1, this._fluxHist.length));
+
+    // Threshold rides on the local mean plus a multiple of the local spread,
+    // so it adapts to both a dense mix and a sparse one.
+    const thresh = fMean + Math.max(fSd * 1.5, 0.0016);
     const now = performance.now();
-    if (rawBass > avg * 1.38 && rawBass > 0.045 && now - this._lastBeat > 190) {
+    if (flux > thresh && this.presence > 0.25 && now - this._lastBeat > 150) {
       this._lastBeat = now;
       this.beat = 1;
       this.beatFlash = 1;
@@ -208,9 +261,12 @@ const A = {
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     if (this.ctx) this.ctx.close();
     Object.assign(this, {
-      ctx:null, stream:null, osc:null, ready:false,
+      ctx:null, stream:null, osc:null, ready:false, presence:0,
       beat:0, beatFlash:0, bpm:0, _hist:[], _beatTimes:[],
-      _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 }
+      _prevSpec:null, _fluxHist:[],
+      _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 },
+      _stat:{ bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
+              air:{mu:0,sd:.02}, level:{mu:0,sd:.02} }
     });
   }
 };

@@ -518,10 +518,10 @@ function channel(colour) {
    at a coarse grid, each cell snapped to its nearest extracted colour, and
    drawn as flat rectangles with no smoothing — so it stays unmistakably the
    album while reading as hard-edged colour blocks rather than a blur. */
-const POSTER = { cols: 0, rows: 0, cell: null, rgb: null };
+const POSTER = { cols: 0, rows: 0, cell: null, rgb: null, str: null, sorted: null };
 // 0 = pure palette, 1 = the picture untouched. Partway keeps the flat
 // poster feel while letting the image read.
-const POSTER_IMAGE = 0.62;
+const POSTER_IMAGE = 0.74;
 
 function buildPoster() {
   if (!ART.img || !srcW(ART.img) || !ART.palette.length) return;
@@ -540,6 +540,20 @@ function buildPoster() {
     // blocks can be blended back toward the actual picture instead of being
     // limited to five flat tones.
     const rgb = new Uint8Array(cols * rows * 3);
+    // How far each cell departs from the image's average colour. This is what
+    // decides which cells survive when the music is quiet — the subject of a
+    // cover stands out from its background, the background does not.
+    const str = new Float32Array(cols * rows);
+    let mr = 0, mg = 0, mb = 0;
+    for (let i = 0; i < cols * rows; i++) { mr += d[i*4]; mg += d[i*4+1]; mb += d[i*4+2]; }
+    mr /= cols * rows; mg /= cols * rows; mb /= cols * rows;
+    let maxD = 1e-6;
+    for (let i = 0; i < cols * rows; i++) {
+      const dd = Math.hypot(d[i*4] - mr, d[i*4+1] - mg, d[i*4+2] - mb);
+      str[i] = dd; if (dd > maxD) maxD = dd;
+    }
+    for (let i = 0; i < cols * rows; i++) str[i] /= maxD;
+
     for (let i = 0; i < cols * rows; i++) {
       const r = d[i*4], g2 = d[i*4+1], b = d[i*4+2];
       rgb[i*3] = r; rgb[i*3+1] = g2; rgb[i*3+2] = b;
@@ -551,17 +565,35 @@ function buildPoster() {
       }
       cell[i] = best;
     }
-    POSTER.cols = cols; POSTER.rows = rows; POSTER.cell = cell; POSTER.rgb = rgb;
+    POSTER.cols = cols; POSTER.rows = rows; POSTER.cell = cell; POSTER.rgb = rgb; POSTER.str = str;
+    // Sorted copy so the threshold can be chosen by rank. Thresholding on
+    // the value itself gives wildly different coverage per image — a
+    // gradient with one small subject left the screen empty at any level
+    // that a busy cover filled completely.
+    POSTER.sorted = Float32Array.from(str).sort();
   } catch (e) { POSTER.cell = null; }   // tainted source
 }
 
 function drawPoster(dt) {
   if (!POSTER.cell) { g.fillStyle = ART.dark; g.fillRect(0, 0, W, H); return; }
-  const { cols, rows, cell } = POSTER;
+  const { cols, rows, cell, str } = POSTER;
   const cw = W / cols, ch = H / rows;
-  g.fillStyle = ART.dark;
+
+  // Flat ground of the artwork's dominant colour. Quiet passages leave most
+  // of the screen as this, with only the most distinctive cells standing on
+  // it; loud passages drop the threshold and the composition fills in.
+  const dom = ART.palette[0] || [90, 90, 110];
+  g.fillStyle = `rgb(${dom[0]|0},${dom[1]|0},${dom[2]|0})`;
   g.fillRect(0, 0, W, H);
   g.imageSmoothingEnabled = false;
+
+  // Fraction of cells to draw, from a sparse handful in near-silence to the
+  // full composition at peak.
+  const fill = resp(A.level);
+  const frac = Math.min(1, 0.10 + fill * 0.80 + A.beat * 0.14);
+  const sorted = POSTER.sorted;
+  const cut = frac >= 0.999 ? -1 : sorted[Math.min(sorted.length - 1,
+                Math.floor((1 - frac) * sorted.length))];
 
   for (let r = 0; r < rows; r++) {
     // Each row is displaced by one frequency band, so the picture shears
@@ -574,6 +606,11 @@ function drawPoster(dt) {
     for (let c = -2; c <= cols + 1; c++) {
       const src = c < 0 ? 0 : c > cols - 1 ? cols - 1 : c;
       const idx = r * cols + src;
+      const st = str[idx];
+      if (st < cut) continue;                 // ground shows through
+      // Ease in over the last stretch above the threshold so cells arrive
+      // rather than popping.
+      const ease = Math.min(1, (st - cut) / 0.14);
       const shift = (A.beat > 0.55 && (r + c) % 3 === 0) ? 1 : 0;
       const pal = ART.palette[(cell[idx] + shift) % ART.palette.length];
       const k = POSTER_IMAGE;
@@ -582,7 +619,7 @@ function drawPoster(dt) {
       const pb = pal[2] + (POSTER.rgb[idx*3 + 2] - pal[2]) * k;
       // Blocks grow toward their neighbours on transients and open up gaps
       // of the ground colour when the music is quiet.
-      const grow = 1 + e * 0.28 + A.beat * 0.45;
+      const grow = (0.55 + ease * 0.45) * (1 + e * 0.28 + A.beat * 0.45);
       const bw = cw * grow, bh = ch * grow;
       g.fillStyle = `rgb(${pr|0},${pg|0},${pb|0})`;
       g.fillRect(c * cw + shove - (bw - cw) / 2, r * ch - (bh - ch) / 2, bw + 1, bh + 1);

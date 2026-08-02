@@ -84,8 +84,10 @@ const FX = {
         float h  = sin(p.x * 7.0 + t * 1.10) * 0.50;
               h += sin(p.y * 5.3 - t * 0.85) * 0.45;
               h += sin((p.x + p.y) * 9.4 + t * 0.65) * 0.30;
-              h += sin(p.x * 17.0 - t * 1.7) * 0.16;
-              h += (fbm(p * 2.1 + t * 0.25) - 0.5) * 0.90;
+        // The fine, fast octave is what reads as frantic in near-silence.
+        // Broad swells stay; detail only arrives with the music.
+              h += sin(p.x * 17.0 - t * 1.7) * (0.03 + uLevel * 0.28);
+              h += (fbm(p * 2.1 + t * 0.25) - 0.5) * (0.35 + uLevel * 0.70);
         for (int i = 0; i < 4; i++){
           if (uDrops[i].w > 0.5){
             float d = distance(p, uDrops[i].xy);
@@ -110,6 +112,8 @@ const FX = {
 
       // Variable-radius blur. Six taps on a rosette is enough at the radii
       // used here and costs a fraction of a separable pass.
+      // Two rings rather than one: an inner ring alone leaves a hard core in
+      // the middle of a "blurred" region, which caps how soft it can look.
       vec3 softTex(vec2 uv, float r){
         if (r < 0.0008) return tex(uv);
         vec3 c = tex(uv);
@@ -117,7 +121,11 @@ const FX = {
           float a = float(i) * 1.5708;
           c += tex(uv + vec2(cos(a), sin(a)) * r);
         }
-        return c / 5.0;
+        for (int i = 0; i < 4; i++){
+          float a = float(i) * 1.5708 + 0.7854;
+          c += tex(uv + vec2(cos(a), sin(a)) * r * 2.1);
+        }
+        return c / 9.0;
       }
 
       void main(){
@@ -130,7 +138,8 @@ const FX = {
         // slightly so colour disperses instead of blurring.
         // ================================================================
         if (uMode == 0){
-          float t = uTime * 0.38;
+          // Surface speed follows the music too, so quiet passages drift.
+          float t = uTime * (0.14 + uLevel * 0.34);
           vec2 p = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0);
 
           float e  = 0.004;
@@ -142,7 +151,7 @@ const FX = {
           // Small on purpose. The gradient of a sum of sines runs to ~4, so
           // an offset in the hundredths already bends the image hard; at the
           // tenths it stops being refraction and becomes soup.
-          float amt = 0.0105 + uBass * 0.0260 + uBeat * 0.0150;
+          float amt = 0.0045 + uBass * 0.0300 + uBeat * 0.0180;
           vec2 off = grad * amt;
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -193,11 +202,16 @@ const FX = {
 
           // The clarity field drifts slowly and is nudged by transients, so
           // *which* parts are sharp is itself the animation.
-          float clarity = fbm(vec2(uv.x * 1.6, uv.y * 2.2) + uTime * 0.045);
-          // Tight smoothstep: sharp zones and dissolved zones with a fast
-          // handover, rather than a uniform middling softness everywhere.
-          clarity = smoothstep(0.36, 0.62, clarity + uBeat * 0.18);
-          float blur = (1.0 - clarity) * (0.016 + uLevel * 0.010);
+          // A drifting noise field plus a slow sweeping band, so the region
+          // in focus travels across the pane instead of only shimmering in
+          // place — that travel is the animation.
+          float clarity = fbm(vec2(uv.x * 1.6, uv.y * 2.2) + uTime * 0.055);
+          clarity += 0.30 * sin(uv.y * 2.3 - uTime * 0.17 + uv.x * 0.8);
+          clarity += uBeat * 0.22 + uMid * 0.18;
+          // Tighter still: near-binary between sharp and dissolved, which is
+          // what makes depth read rather than a uniform middling softness.
+          clarity = smoothstep(0.40, 0.60, clarity);
+          float blur = (1.0 - clarity) * (0.034 + uLevel * 0.022);
 
           col = softTex(suv, blur);
 
@@ -288,7 +302,7 @@ const FX = {
 
           float r = length(f);
           float band = mod(cell.x + cell.y, 5.0);
-          float pulse = 1.00 + uBass * 0.08 + uBeat * 0.07
+          float pulse = 0.90 + uBass * 0.24 + uBeat * 0.17
                       + sin(uTime * 0.5 + (cell.x + cell.y) * 0.7) * 0.03;
 
           if (r > pulse){
@@ -301,7 +315,14 @@ const FX = {
             // circle covers its own patch and its own centre magnifies.
             float rr = pow(r / pulse, 2.15) * pulse;
             vec2 warped = (r > 0.0001) ? (f / r) * rr : f;
-            vec2 centre = (cell + 0.5) / grid;
+            // The whole image drifts behind the grid on a slow Lissajous —
+            // a screensaver wander — pushed a little harder by the music.
+            // Without it the circles pulse but the picture inside is static,
+            // and the look reads as decoration rather than as reactive.
+            vec2 drift = vec2(sin(uTime * 0.061) * 0.5 + sin(uTime * 0.023) * 0.5,
+                              cos(uTime * 0.047) * 0.5 + cos(uTime * 0.019) * 0.5)
+                       * (0.055 + uLevel * 0.075);
+            vec2 centre = (cell + 0.5) / grid + drift;
             centre.x /= ar;
             vec2 suv = centre + warped * (0.5 / grid) * vec2(1.0 / ar, 1.0)
                               * (1.15 + uBass * 0.18);

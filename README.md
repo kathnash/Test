@@ -218,8 +218,18 @@ approach.
 
 - `AnalyserNode` (2048-point FFT) over the incoming stream
 - Energy split into bass / mid / high / air bands by real Hz ranges
-- Onset detection on the low band against a rolling local average, with a refractory window,
-  plus a median-of-gaps BPM estimate
+- Each band measured **relative to its own recent behaviour** — how far above or below its running
+  mean it sits, scaled by how much it normally varies — blended with the peak-normalised absolute
+  level. Peak normalisation alone divides by a decaying maximum, so a band that stays roughly
+  constant pins near 1.0 and stops moving: punchy tracks looked reactive and smooth ones looked
+  like a random animation. Measured over 25s of synthetic signal, a sustained pad moved through a
+  range of 0.096 under peak-only and 0.611 under the blend, while a kick pattern was unchanged.
+- A presence gate so near-silence reads as still rather than as amplified room tone
+- **Onsets from spectral flux** — the summed positive change across the whole spectrum — against a
+  threshold that rides on the local mean plus a multiple of the local spread. Watching only low-band
+  energy finds nothing in acoustic, vocal or ambient material, which is exactly the music that
+  looked unreactive; flux fires on a plucked string or a vocal entry as readily as on a kick. On the
+  built-in 120bpm demo the old detector reported 75bpm; this reports 120.
 - Spectral centroid drives hue, so colour tracks the brightness of the music
 - Canvas 2D with additive blending and a per-frame trail fade for the glow
 
