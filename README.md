@@ -66,9 +66,21 @@ Poster draws two extra cells beyond each edge.
 
 ### The shader layer
 
-`fx.js` renders to its own offscreen canvas, which `album.html` blits into the main 2D canvas — so
-grain, vignette and the HUD keep working unchanged. It caps its own resolution at 1280px wide:
-these are full-screen per-pixel passes and a phone does not need them at native retina density.
+`fx.js` renders into its own canvas element stacked over the 2D one, and the two are shown or
+hidden by look. It originally rendered offscreen and was blitted into the 2D canvas every frame,
+which forced a GPU→CPU→GPU round trip per frame — expensive, hot, and the likely cause of stalls
+when switching away from a shader look. Its backing store is capped at 760px on phones and 1180px
+elsewhere; these are fragment-bound passes and nothing visible is gained by rendering them at full
+retina density.
+
+### Cost
+
+A full-screen 60fps visualiser will warm a phone — the GPU and display are held at full power for
+as long as it runs. That is inherent, not a defect, and the device throttles itself before
+anything is at risk. What isn't inherent, and has been removed: the per-frame WebGL→2D blit, a
+scratch canvas reallocated twice per frame in Glitch, a radial gradient rebuilt every frame for
+the vignette, and grain tiled with ~30 `drawImage` calls per frame instead of one. Rendering also
+stops entirely while the page is hidden.
 
 If WebGL is unavailable the four shader looks are removed from the list at boot rather than left
 in place to render a blank screen.

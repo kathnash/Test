@@ -18,7 +18,10 @@
     font: 400 15px/1.5 ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
     color: var(--ui); overscroll-behavior:none; touch-action:manipulation;
   }
-  canvas#c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  canvas#c, canvas#fxc{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  canvas#fxc{ display:none; }
+  body.fx canvas#c{ display:none; }
+  body.fx canvas#fxc{ display:block; }
 
   #gate{
     position:fixed; inset:0; z-index:30;
@@ -114,6 +117,7 @@
 <body>
 
 <canvas id="c"></canvas>
+<canvas id="fxc"></canvas>
 
 <div id="np"><img id="np-art" alt=""><div class="meta"><div class="t" id="np-t"></div><div class="a" id="np-a"></div></div></div>
 
@@ -344,6 +348,7 @@ const tg = TINY.getContext('2d');
 const TINY_W = 7;
 
 let W = 0, H = 0, DPR = 1, LOW = 132;
+let VIGNETTE = null, GRAIN_SHEET = null;
 
 function renderTiny() {
   if (!ART.img || !srcW(ART.img)) return;
@@ -365,6 +370,19 @@ function resize() {
   const ar = H / W;
   LO.width = LOW; LO.height = Math.max(8, Math.round(LOW * ar));
   PREV.width = LO.width; PREV.height = LO.height;
+
+  VIGNETTE = g.createRadialGradient(W/2, H/2, Math.min(W,H) * 0.3,
+                                    W/2, H/2, Math.max(W,H) * 0.78);
+  VIGNETTE.addColorStop(0, 'rgba(0,0,0,0)');
+  VIGNETTE.addColorStop(1, 'rgba(0,0,0,1)');
+
+  GRAIN_SHEET = document.createElement('canvas');
+  GRAIN_SHEET.width = Math.max(1, Math.round(W));
+  GRAIN_SHEET.height = Math.max(1, Math.round(H));
+  const gsx = GRAIN_SHEET.getContext('2d');
+  for (let y = 0; y < GRAIN_SHEET.height; y += 128)
+    for (let x = 0; x < GRAIN_SHEET.width; x += 128) gsx.drawImage(GRAIN, x, y);
+
   FX.resize(W, H);
   renderTiny();
   buildPoster();
@@ -482,8 +500,10 @@ let swirlAngle = 0;
 const CH = document.createElement('canvas');
 const cg = CH.getContext('2d');
 function channel(colour) {
-  CH.width = LO.width; CH.height = LO.height;
-  cg.globalCompositeOperation = 'source-over';
+  if (CH.width !== LO.width || CH.height !== LO.height) {
+    CH.width = LO.width; CH.height = LO.height;
+  }
+  cg.globalCompositeOperation = 'copy';   // clears and draws in one pass
   cg.drawImage(LO, 0, 0);
   cg.globalCompositeOperation = 'multiply';
   cg.fillStyle = colour;
@@ -556,19 +576,16 @@ function drawPoster(dt) {
 }
 
 function drawFX(cfg) {
-  const out = FX.render({
+  FX.render({
     time, mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
     level: resp(A.level), beat: A.beat,
     palette: ART.palette.length ? ART.palette : [[120,120,140]],
     drops
   });
-  if (!out) { g.fillStyle = ART.dark; g.fillRect(0, 0, W, H); return; }
-  g.drawImage(out, 0, 0, out.width, out.height, 0, 0, W, H);
 }
 
 function drawScene(dt) {
-  if (LOOKS[look].fx) return drawFX(LOOKS[look]);
   if (is('Poster')) return drawPoster(dt);
   const w = LO.width, h = LO.height;
   const cfg = LOOKS[look], G = gain();
@@ -656,27 +673,33 @@ function drawScene(dt) {
 
   if (is('Glitch')) {
     const amt = Math.min(1, A.beat * 0.85 + Math.min(1, A.high * G) * 0.4);
-    if (amt > 0.04) {
-      const slices = 10, sh = H / slices;
+    if (amt > 0.14) {
+      const slices = 6, sh = H / slices;
       for (let i = 0; i < slices; i++) {
         if (Math.random() > 0.6) continue;
         const dx = (Math.random() * 2 - 1) * W * 0.17 * amt;
         g.drawImage(LO, 0, i * h / slices, w, h / slices, dx, i * sh, W, sh + 1);
       }
-      g.globalCompositeOperation = 'lighter';
-      g.globalAlpha = 0.30 * amt;
-      g.drawImage(channel('#ff0000'), 0, 0, w, h, -W * 0.014 * amt, 0, W, H);
-      g.drawImage(channel('#00ffff'), 0, 0, w, h,  W * 0.014 * amt, 0, W, H);
-      g.globalAlpha = 1;
-      g.globalCompositeOperation = 'source-over';
+      if (amt > 0.32) {          // two more full-screen passes
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.30 * amt;
+        g.drawImage(channel('#ff0000'), 0, 0, w, h, -W * 0.014 * amt, 0, W, H);
+        g.drawImage(channel('#00ffff'), 0, 0, w, h,  W * 0.014 * amt, 0, W, H);
+        g.globalAlpha = 1;
+        g.globalCompositeOperation = 'source-over';
+      }
     }
   }
 
-  // Vignette, at full resolution so it stays clean.
-  const vg = g.createRadialGradient(W/2, H/2, Math.min(W,H) * 0.3, W/2, H/2, Math.max(W,H) * 0.78);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, `rgba(0,0,0,${0.55 - energy * 0.22})`);
-  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  // Vignette, at full resolution so it stays clean. Cached: only its
+  // strength varies, and globalAlpha can carry that without rebuilding the
+  // gradient object sixty times a second.
+  if (VIGNETTE) {
+    g.globalAlpha = Math.max(0, 0.55 - energy * 0.22);
+    g.fillStyle = VIGNETTE;
+    g.fillRect(0, 0, W, H);
+    g.globalAlpha = 1;
+  }
 }
 
 /* A little grain, rendered once and tiled — upscaled gradients band badly
@@ -694,7 +717,14 @@ const GRAIN = (() => {
 })();
 
 let last = performance.now(), videoClock = 0;
+let hidden = false;
+document.addEventListener('visibilitychange', () => {
+  hidden = document.hidden;
+  if (!hidden) { last = performance.now(); requestAnimationFrame(frame); }
+});
+
 function frame(now) {
+  if (hidden) return;                 // resumed by visibilitychange
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now; time += dt;
   A.update(dt);
@@ -720,16 +750,17 @@ function frame(now) {
     }
   }
 
-  updateBlobs(dt);
   updateDrops(dt);
+  if (LOOKS[look].fx) { drawFX(LOOKS[look]); requestAnimationFrame(frame); return; }
+  updateBlobs(dt);
   drawScene(dt);
 
   // Grain hides banding in the soft looks, but only muddies Poster's flat
   // blocks, which are meant to read as clean colour.
-  if (!is('Poster') && !LOOKS[look].fx) {
+  if (!is('Poster') && GRAIN_SHEET) {
     g.globalCompositeOperation = 'overlay';
     g.globalAlpha = 0.035;
-    for (let y = 0; y < H; y += 128) for (let x = 0; x < W; x += 128) g.drawImage(GRAIN, x, y);
+    g.drawImage(GRAIN_SHEET, 0, 0, W, H);
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
   }
@@ -888,6 +919,16 @@ function buildLookMenu() {
 }
 function setLookIndex(i) {
   look = i;
+  const usingFX = !!LOOKS[look].fx;
+  document.body.classList.toggle('fx', usingFX);
+  if (usingFX) {
+    FX.resize(W, H);
+    FX.setSource(ART.img, srcW(ART.img), srcH(ART.img));
+  } else {
+    // Clear the 2D canvas so a stale frame from before the shader look
+    // cannot flash while the trail-fade looks build back up.
+    g.fillStyle = ART.dark; g.fillRect(0, 0, W, H);
+  }
   document.getElementById('look').textContent = LOOKS[look].name;
   buildLookMenu();
 }
@@ -926,7 +967,7 @@ addEventListener('keydown', e => {
 (async () => {
   // Without WebGL the shader looks cannot render at all, so remove them
   // rather than leaving entries that would show a blank screen.
-  if (!FX.init()) {
+  if (!FX.init(document.getElementById('fxc'))) {
     for (let i = LOOKS.length - 1; i >= 0; i--) if (LOOKS[i].fx) LOOKS.splice(i, 1);
   }
   buildLookMenu();
