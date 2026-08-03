@@ -113,22 +113,34 @@ const FX = {
         return texture2D(uTex, clamp(uv, 0.001, 0.999)).rgb;
       }
 
-      // Variable-radius blur. Six taps on a rosette is enough at the radii
-      // used here and costs a fraction of a separable pass.
-      // Two rings rather than one: an inner ring alone leaves a hard core in
-      // the middle of a "blurred" region, which caps how soft it can look.
+      // Variable-radius blur, sampled on a golden-angle spiral.
+      //
+      // This used to be eight taps on two axis-aligned rings, which is not a
+      // blur at all — it is eight sharp copies of the image at fixed offsets,
+      // and at the radii this look reaches (about 40px) the eye reads those
+      // copies as strands. That is where the ropey texture came from.
+      //
+      // Three things make it smooth. The spiral covers the disc evenly rather
+      // than leaving it hollow, with sqrt spacing so samples do not pile up in
+      // the middle. The weight falls off toward the rim, so the disc has a
+      // soft edge instead of a hard cut. And the whole pattern is rotated by a
+      // per-screen-pixel hash, which turns whatever aliasing survives into
+      // fine static grain — a texture this look already has — instead of into
+      // structure that lines up across neighbouring pixels.
       vec3 softTex(vec2 uv, float r){
         if (r < 0.0008) return tex(uv);
-        vec3 c = tex(uv);
-        for (int i = 0; i < 4; i++){
-          float a = float(i) * 1.5708;
-          c += tex(uv + vec2(cos(a), sin(a)) * r);
+        float a0 = hash(floor(vUv * uRes)) * 6.2831853;
+        vec3 c = vec3(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < 16; i++){
+          float fi = float(i) + 0.5;
+          float rr = sqrt(fi / 16.0);
+          float a  = fi * 2.39996323 + a0;      // golden angle
+          float w  = 1.0 - rr * 0.55;
+          c += tex(uv + vec2(cos(a), sin(a)) * rr * r) * w;
+          wsum += w;
         }
-        for (int i = 0; i < 4; i++){
-          float a = float(i) * 1.5708 + 0.7854;
-          c += tex(uv + vec2(cos(a), sin(a)) * r * 2.1);
-        }
-        return c / 9.0;
+        return c / wsum;
       }
 
       void main(){
@@ -227,13 +239,17 @@ const FX = {
 
           col = softTex(suv, blur);
 
-          // Edge shading on each flute gives the glass thickness.
-          float edge = 1.0 - pow(abs(f), 2.6) * 0.62;
+          // Edge shading on each flute gives the glass thickness. Kept light:
+          // the relief is the least interesting thing here, and at full
+          // strength it turned a pane into a row of tubes. The lens geometry
+          // above is what carries the glass — how the image slides and
+          // inverts within each flute — and that is untouched.
+          float edge = 1.0 - pow(abs(f), 2.6) * 0.34;
           col *= edge;
           // Two speculars per flute — a bright catch-light and a weaker
-          // return off the far curve. This is most of what sells it as glass.
-          col += pow(max(0.0, 1.0 - abs(f + 0.52) * 6.5), 2.2) * 0.30 * (0.35 + clarity);
-          col += pow(max(0.0, 1.0 - abs(f - 0.30) * 9.0), 3.0) * 0.12 * (0.35 + clarity);
+          // return off the far curve.
+          col += pow(max(0.0, 1.0 - abs(f + 0.52) * 6.5), 2.2) * 0.17 * (0.35 + clarity);
+          col += pow(max(0.0, 1.0 - abs(f - 0.30) * 9.0), 3.0) * 0.07 * (0.35 + clarity);
         }
 
         // ================================================================

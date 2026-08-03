@@ -51,7 +51,9 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   moving behind slides the wrong way and the result reads as stripes rather than glass. Clarity is
   deliberately uneven and drifts, so some of the image stays sharp while other parts dissolve, and
   *which* parts are sharp is itself the animation. The pane never moves: rib count and lens
-  geometry are constants, and only the subject behind them drifts.
+  geometry are constants, and only the subject behind them drifts. The relief is kept light — at
+  full strength the edge shading and speculars turn a pane into a row of tubes, and the lens
+  geometry is what sells the glass anyway.
 - **Marble** — irregular blobs on a field of the artwork's dominant colour, each ringed by a bled
   black outline, sizes and density varying across the canvas, with the artwork itself reading
   through both blobs and ground. Beats swell nearby blobs outward like spreading ink. Built from a
@@ -73,6 +75,28 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### A ring of taps is not a blur
+
+Ribbed's soft regions came out ropey — visibly stranded rather than smooth. The blur was eight taps
+on two axis-aligned rings, which at the radii this look reaches (around 40px) is not a blur at all:
+it is **eight sharp copies of the image at fixed offsets**, and neighbouring pixels put their copies
+in the same eight directions, so the eye assembles them into strands.
+
+Three changes, each fixing a different cause:
+
+- **A golden-angle spiral instead of rings**, with `sqrt` spacing, so the samples cover the disc
+  evenly rather than sitting on two circles with a hollow between them.
+- **Weight falling off toward the rim**, so the sampled disc has a soft edge instead of a hard cut —
+  a hard-edged kernel leaves a visible boundary wherever the blur radius changes.
+- **The whole pattern rotated by a per-screen-pixel hash.** This is the one that kills the strands:
+  aliasing only reads as structure when it lines up between neighbouring pixels. Rotated per pixel
+  it becomes fine static grain, which this look already carries.
+
+The general form: **under-sampling is not the problem, correlated under-sampling is.** Sixteen taps
+still cannot properly filter a 40px radius, but decorrelated they read as grain rather than as rope.
+Cost went from 64.0 to 67.2 ms/frame on CPU raster despite going 9 → 16 taps, because the sharp
+regions early-out before sampling at all.
 
 ### Poster picks cells by local contrast
 
