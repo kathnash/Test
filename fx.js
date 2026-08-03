@@ -49,6 +49,7 @@ const FX = {
       uniform float uSwell;   // slow envelope for refraction depth
       uniform float uLumLo, uLumHi;  // source's 8th/92nd luminance percentiles
       uniform float uMedNorm;        // its median within that range
+      uniform float uCycle;          // 0..1 through the cyanotype process
       uniform int   uMode;
       uniform float uBass, uMid, uHigh, uLevel, uBeat;
       uniform vec3  uPal[5];
@@ -358,94 +359,109 @@ const FX = {
         }
 
         // ================================================================
-        // 4 — CYANOTYPE. A contact print: luminance mapped onto a Prussian
-        // blue to paper-white ramp, on heavy fibre, with the exposure
-        // threshold and the edge softness both driven by the music.
+        // 4 — CYANOTYPE. Runs the actual process on a loop: coated paper,
+        // exposure, the water wash where the blue arrives, then the slow
+        // deepening as it oxidises — and back. The music is the light
+        // source, so louder passages burn the print faster.
         // ================================================================
         else {
-          // Two frequencies per axis so the path never visibly repeats, and
-          // wide enough to actually read as movement. At 0.012 a still image
-          // was very nearly frozen.
+          float c = uCycle;
+
+          // Each stage returns to zero by the end of the cycle, so the state
+          // at c = 1 is identical to the state at c = 0 and the loop closes
+          // without a seam. Every edge is a smoothstep, so the slope is zero
+          // at the wrap too, not just the value; nothing switches.
+          //
+          // Burn in to 0.26, rinse to 0.46, deepen to 0.66, sit at full depth,
+          // then sink back into the sheet over the last quarter.
+          float expose = smoothstep(0.03, 0.26, c);
+          float wash   = smoothstep(0.28, 0.46, c);
+          float deepen = smoothstep(0.46, 0.66, c);
+
+          // The return is a blend of the finished colour back toward bare
+          // paper, not the exposure being wound down. Unwinding the exposure
+          // drags v back through the steep part of the blue ramp, so an even
+          // ramp in c comes out as a lurch on screen; blending the colour is
+          // even by construction. It also closes the loop: settle reaches 1
+          // exactly as c reaches 1, leaving the same coated sheet the cycle
+          // started on, with the slope at zero on both sides of the wrap.
+          float settle = smoothstep(0.76, 1.00, c);
+
           vec2 drift = vec2(sin(uTime * 0.041) * 0.6 + sin(uTime * 0.017) * 0.4,
                             cos(uTime * 0.033) * 0.6 + cos(uTime * 0.013) * 0.4) * 0.030;
           vec3 src = tex(coverUV(uv + drift));
           float lum = dot(src, vec3(0.299, 0.587, 0.114));
-
-          // Uneven hand-coating: the emulsion is brushed on, so sensitivity
-          // varies across the sheet. Without this the blue is a flat fill and
-          // the whole thing reads as a colour filter rather than a print.
-          // Stretched to the image's own range, so the threshold below has the
-          // same room to work with on a dark cover as on a bright one.
           lum = clamp((lum - uLumLo) / max(0.04, uLumHi - uLumLo), 0.0, 1.0);
 
-          // The wash creeps. A static coating field is the single biggest
-          // reason a still image sat frozen: it is the largest-scale tonal
-          // structure on screen and it never moved.
           vec2 cp = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 2.2;
           float coat = fbm(cp + vec2(uTime * 0.020, uTime * -0.014) + 4.0);
           lum += (coat - 0.5) * 0.15;
 
-          // A photogram has no inherent polarity when the input is an
-          // arbitrary picture: what should stay paper white is whatever the
-          // object was, and an image does not say. The rule that always gives
-          // the reference's character — deep blue field, luminous forms — is
-          // that the GROUND exposes to blue and the subject stays pale. The
-          // ground is whatever tone the image is mostly made of, so the
-          // polarity follows the median rather than being fixed.
           float pol = uMedNorm > 0.5 ? 1.0 : -1.0;
 
-          // Developer spreading outward from each transient: a soft expanding
-          // ring that briefly opens the exposure and softens the edge as it
-          // passes. Reactive, but it arrives as a wave rather than a step.
-          float wash = 0.0;
+          // Developer spreading from each transient.
+          float dev = 0.0;
           for (int i = 0; i < 4; i++){
             if (uDrops[i].w > 0.5){
               float d = distance(uv, vec2(uDrops[i].x / 1.6, uDrops[i].y));
               float age = uDrops[i].z;
-              wash += exp(-abs(d - age * 0.26) * 6.5) * exp(-age * 1.15);
+              dev += exp(-abs(d - age * 0.26) * 6.5) * exp(-age * 1.15);
             }
           }
 
-          // A slow breath so the print keeps developing even in silence.
-          float breath = sin(uTime * 0.085) * 0.022 + sin(uTime * 0.034) * 0.014;
-          float bloom = uSwell * 0.16 + uBeat * 0.06 + breath + wash * 0.09;
-
-          // Where the object lay flat against the paper the edge is crisp;
-          // where it lifted away the light crept under and the edge went
-          // soft. That variation is most of what makes a photogram read as
-          // one, and it drifts, so which edges are sharp keeps changing.
           float contact = fbm(uv * 3.4 + vec2(uTime * 0.038, uTime * 0.022) + 17.0);
           float soft = mix(0.04, 0.26, contact) * (0.60 + uMid * 0.55 + uSwell * 0.35);
+          soft *= 1.0 + dev * 0.75;
 
-          // Placed a full transition width beyond the median so the ground is
-          // solidly exposed rather than sitting inside the soft edge. Louder
-          // music walks it back toward the median and the pale forms bloom.
-          soft *= 1.0 + wash * 0.75;
-          float expo = uMedNorm + pol * (bloom - soft - 0.06);
+          float breath = sin(uTime * 0.085) * 0.022 + sin(uTime * 0.034) * 0.014;
+          float bloom = uSwell * 0.13 + uBeat * 0.05 + breath + dev * 0.09;
+          float expoT = uMedNorm + pol * (bloom - soft - 0.06);
 
-          float s0 = smoothstep(expo - soft, expo + soft, lum);
-          float v = pol > 0.0 ? s0 : 1.0 - s0;                  // 1 = fully exposed
+          float s0 = smoothstep(expoT - soft, expoT + soft, lum);
+          float v = pol > 0.0 ? s0 : 1.0 - s0;
 
-          vec3 paper = vec3(0.878, 0.918, 0.965);
-          vec3 pale  = vec3(0.596, 0.729, 0.867);
-          vec3 blue  = vec3(0.114, 0.208, 0.545);
-          vec3 deep  = vec3(0.063, 0.094, 0.325);
+          // The image burns in rather than being there from the start, and
+          // keeps gaining depth after the wash as the pigment oxidises.
+          v = clamp(v * expose, 0.0, 1.0);
+          v = pow(v, mix(1.0, 0.80, deepen));
 
-          if (v < 0.34)      col = mix(paper, pale, v / 0.34);
-          else if (v < 0.72) col = mix(pale,  blue, (v - 0.34) / 0.38);
-          else               col = mix(blue,  deep, (v - 0.72) / 0.28);
+          // Coated and exposed but not yet rinsed: dusty violet, and low in
+          // contrast, because the Prussian blue has not formed yet.
+          vec3 uP = vec3(0.815, 0.755, 0.800);
+          vec3 uM = vec3(0.560, 0.480, 0.575);
+          vec3 uD = vec3(0.330, 0.270, 0.395);
+          vec3 unwashed = v < 0.5 ? mix(uP, uM, v / 0.5) : mix(uM, uD, (v - 0.5) / 0.5);
 
-          // Paper fibre. Static, and heaviest in the blue, exactly as the
-          // pigment settles into the texture of the sheet.
+          // Rinsed: the unexposed sensitiser washes off to bare paper and the
+          // blue arrives all at once.
+          vec3 wP = vec3(0.878, 0.918, 0.965);
+          vec3 wL = vec3(0.596, 0.729, 0.867);
+          vec3 wB = vec3(0.114, 0.208, 0.545);
+          vec3 wD = vec3(0.063, 0.094, 0.325);
+          vec3 washed;
+          if (v < 0.34)      washed = mix(wP, wL, v / 0.34);
+          else if (v < 0.72) washed = mix(wL, wB, (v - 0.34) / 0.38);
+          else               washed = mix(wB, wD, (v - 0.72) / 0.28);
+
+          col = mix(unwashed, washed, wash);
+
+          // A wet sheen at the moment the water is running over it. Zero at
+          // both ends of the wash, so it needs no separate handling at the wrap.
+          float wet = wash * (1.0 - wash) * 4.0;
+          col *= 1.0 + wet * 0.07;
+
+          // Back to the bare coated sheet.
+          col = mix(col, uP, settle);
+          float vs = v * (1.0 - settle);
+
+          // Paper fibre. Static, and heaviest where the pigment sits.
           float fib = hash(floor(vUv * uRes / 1.35));
-          col += (fib - 0.5) * (0.055 + v * 0.11);
+          col += (fib - 0.5) * (0.055 + vs * 0.11);
           float fib2 = fbm(vUv * uRes / 26.0);
           col *= 0.955 + fib2 * 0.09;
 
-          // Slight halo where pale meets blue, from light spreading in the
-          // wet emulsion.
           float halo = 1.0 - abs(v - 0.34) * 3.4;
-          col += max(0.0, halo) * 0.05;
+          col += max(0.0, halo) * 0.05 * wash * (1.0 - settle);
         }
 
         col = clamp(col, 0.0, 1.0);
@@ -481,7 +497,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uMode','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uCycle','uMode','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -554,6 +570,7 @@ const FX = {
     gl.uniform1f(this.u.uLumLo, p.lumLo);
     gl.uniform1f(this.u.uLumHi, p.lumHi);
     gl.uniform1f(this.u.uMedNorm, p.medianNorm);
+    gl.uniform1f(this.u.uCycle, p.cycle);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);

@@ -70,9 +70,32 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   pushes; without it the circles pulsed while the picture inside sat still, and the look read as
   decoration rather than as reactive. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
-- **Cyanotype** — a contact print: deep Prussian blue field, luminous pale forms, heavy paper fibre
-  and an unevenly brushed coating. Exposure and edge softness both follow the music, so the pale
-  shapes bloom and their edges travel between crisp and dissolved.
+- **Cyanotype** — a contact print, running the actual darkroom process on a loop: a dusty violet
+  coated sheet, the image burning in, the water wash where the Prussian blue arrives all at once,
+  then the slow deepening as the pigment oxidises, before it sinks back into the paper and starts
+  over. Exposure and edge softness both follow the music, so the pale shapes bloom and their edges
+  travel between crisp and dissolved.
+
+### Cyanotype's process cycle
+
+The music is the light source: `cyanoCycle` advances at `0.70 + level + beat`, so a loud passage
+burns the print in about 13s and silence takes about 37s. The rate is **integrated, not read off the
+clock** — the same rule the ripple phase needs — so a change in the music speeds the process up from
+wherever it has got to rather than teleporting it.
+
+Closing the loop needs the state at `c = 1` to equal the state at `c = 0`, in value *and* slope, or
+the wrap reads as a cut. Every stage is a smoothstep, which is flat at both its ends, and the frame
+returns to bare paper before `c` wraps.
+
+**The return has to be a colour blend, not the exposure wound backwards.** The first version faded
+`expose` back down, which is the obvious move and the wrong one: `expose` scales `v`, and the blue
+palette is far steeper near paper-white than it is in the deep end, so an even ramp in `c` came out
+as a lurch — a 33-unit jump in mean frame colour concentrated in a fifth of a second, against 8 and
+13 either side of it. The fade is now `mix(col, paper, settle)` applied to the finished colour, which
+is even by construction: 8/13/13/12/7/2 across the whole exit. Anything else keyed to the print —
+the fibre weighting, the wash halo — is scaled by `1 - settle` so it lands back on its `c = 0` value
+too. The general form: **when a ramp drives something through a non-linear map, the perceived rate is
+the map's slope, not the ramp's** — either linearise the map or move the ramp to where the map is flat.
 
 The look button opens a picker; space steps through the live looks, skipping hidden ones.
 

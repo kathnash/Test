@@ -697,6 +697,7 @@ function drawFX(cfg) {
   FX.render({
     time, phase: ripplePhase, swell: rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
+    cycle: cyanoCycle,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
     level: resp(A.level), beat: A.beat,
@@ -840,6 +841,12 @@ let last = performance.now(), videoClock = 0;
 // Integrated separately from `time` so the ripple surface can change speed
 // without its phase jumping.
 let ripplePhase = 0, rippleSwell = 0;
+// Position in the cyanotype process, 0..1. Integrated like the ripple
+// phase so the rate can change without the position jumping. The curves
+// in the shader all return to their starting values at 1, so the wrap is
+// invisible.
+let cyanoCycle = 0;
+const CYANO_SECONDS = 26;
 let videoDirty = false, videoRVFC = false;
 let hidden = false;
 document.addEventListener('visibilitychange', () => {
@@ -890,6 +897,14 @@ function frame(now) {
 
   updateDrops(dt);
   ripplePhase += dt * (0.30 + resp(A.level) * 0.14);
+
+  // The music is the light source: louder passages expose the print faster,
+  // and a transient is a burst of light. Roughly 37s a cycle in silence, down
+  // to about 13s when it is loud. The rate is integrated rather than read off
+  // the clock, so a change in the music speeds the process up from where it
+  // has got to instead of jumping it somewhere else.
+  cyanoCycle = (cyanoCycle + dt / CYANO_SECONDS *
+                (0.70 + resp(A.level) * 1.00 + A.beat * 0.25)) % 1;
   // Refraction depth gets a slower envelope than the bands themselves. It
   // scales the entire displacement field, so it has to glide.
   const swTarget = Math.min(1, resp(A.bass) * 0.85 + A.beat * 0.45);
