@@ -161,7 +161,7 @@ const FX = {
           // fast rise moves every pixel of the image simultaneously — which
           // reads as a snap however smooth the underlying band is. Depth of
           // water should swell, not switch.
-          float amt = 0.0035 + uSwell * 0.0320;
+          float amt = 0.0090 + uSwell * 0.0270;
           vec2 off = grad * amt;
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -205,8 +205,9 @@ const FX = {
           // The subject behind the glass drifts and sways instead: a slow
           // parallax that the music pushes, so depth changes without the pane
           // ever appearing to shift.
-          vec2 par = vec2(sin(uTime * 0.105) * 0.020, cos(uTime * 0.082) * 0.016)
-                   * (0.55 + uLevel * 1.5);
+          vec2 par = vec2(sin(uTime * 0.105) * 0.020 + sin(uTime * 0.041) * 0.013,
+                          cos(uTime * 0.082) * 0.016 + cos(uTime * 0.031) * 0.011)
+                   * (0.85 + uLevel * 1.5);
           float wob = sin(uv.y * 3.0 + uTime * 0.18) * 0.003 * (0.4 + uLevel);
           vec2 suv = coverUV(vec2(sx + wob + par.x, uv.y + par.y));
 
@@ -331,7 +332,7 @@ const FX = {
             // and the look reads as decoration rather than as reactive.
             vec2 drift = vec2(sin(uTime * 0.061) * 0.5 + sin(uTime * 0.023) * 0.5,
                               cos(uTime * 0.047) * 0.5 + cos(uTime * 0.019) * 0.5)
-                       * (0.055 + uLevel * 0.075);
+                       * (0.085 + uLevel * 0.090);
             vec2 centre = (cell + 0.5) / grid + drift;
             centre.x /= ar;
             vec2 suv = centre + warped * (0.5 / grid) * vec2(1.0 / ar, 1.0)
@@ -362,8 +363,11 @@ const FX = {
         // threshold and the edge softness both driven by the music.
         // ================================================================
         else {
-          // Very slow wander so a still image is never completely static.
-          vec2 drift = vec2(sin(uTime * 0.033), cos(uTime * 0.026)) * 0.012;
+          // Two frequencies per axis so the path never visibly repeats, and
+          // wide enough to actually read as movement. At 0.012 a still image
+          // was very nearly frozen.
+          vec2 drift = vec2(sin(uTime * 0.041) * 0.6 + sin(uTime * 0.017) * 0.4,
+                            cos(uTime * 0.033) * 0.6 + cos(uTime * 0.013) * 0.4) * 0.030;
           vec3 src = tex(coverUV(uv + drift));
           float lum = dot(src, vec3(0.299, 0.587, 0.114));
 
@@ -374,8 +378,12 @@ const FX = {
           // same room to work with on a dark cover as on a bright one.
           lum = clamp((lum - uLumLo) / max(0.04, uLumHi - uLumLo), 0.0, 1.0);
 
-          float coat = fbm(uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 2.2 + 4.0);
-          lum += (coat - 0.5) * 0.13;
+          // The wash creeps. A static coating field is the single biggest
+          // reason a still image sat frozen: it is the largest-scale tonal
+          // structure on screen and it never moved.
+          vec2 cp = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 2.2;
+          float coat = fbm(cp + vec2(uTime * 0.020, uTime * -0.014) + 4.0);
+          lum += (coat - 0.5) * 0.15;
 
           // A photogram has no inherent polarity when the input is an
           // arbitrary picture: what should stay paper white is whatever the
@@ -385,18 +393,34 @@ const FX = {
           // ground is whatever tone the image is mostly made of, so the
           // polarity follows the median rather than being fixed.
           float pol = uMedNorm > 0.5 ? 1.0 : -1.0;
-          float bloom = uSwell * 0.16 + uBeat * 0.06;
+
+          // Developer spreading outward from each transient: a soft expanding
+          // ring that briefly opens the exposure and softens the edge as it
+          // passes. Reactive, but it arrives as a wave rather than a step.
+          float wash = 0.0;
+          for (int i = 0; i < 4; i++){
+            if (uDrops[i].w > 0.5){
+              float d = distance(uv, vec2(uDrops[i].x / 1.6, uDrops[i].y));
+              float age = uDrops[i].z;
+              wash += exp(-abs(d - age * 0.26) * 6.5) * exp(-age * 1.15);
+            }
+          }
+
+          // A slow breath so the print keeps developing even in silence.
+          float breath = sin(uTime * 0.085) * 0.022 + sin(uTime * 0.034) * 0.014;
+          float bloom = uSwell * 0.16 + uBeat * 0.06 + breath + wash * 0.09;
 
           // Where the object lay flat against the paper the edge is crisp;
           // where it lifted away the light crept under and the edge went
           // soft. That variation is most of what makes a photogram read as
           // one, and it drifts, so which edges are sharp keeps changing.
-          float contact = fbm(uv * 3.4 + uTime * 0.025 + 17.0);
-          float soft = mix(0.04, 0.24, contact) * (0.75 + uMid * 0.45);
+          float contact = fbm(uv * 3.4 + vec2(uTime * 0.038, uTime * 0.022) + 17.0);
+          float soft = mix(0.04, 0.26, contact) * (0.60 + uMid * 0.55 + uSwell * 0.35);
 
           // Placed a full transition width beyond the median so the ground is
           // solidly exposed rather than sitting inside the soft edge. Louder
           // music walks it back toward the median and the pale forms bloom.
+          soft *= 1.0 + wash * 0.75;
           float expo = uMedNorm + pol * (bloom - soft - 0.06);
 
           float s0 = smoothstep(expo - soft, expo + soft, lum);

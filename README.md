@@ -90,6 +90,14 @@ absolute threshold has almost no room on a dark image: its ground sits near zero
 transition band is wider than the space beneath it, and the ground can never read as fully exposed
 no matter where the threshold goes.
 
+**Every look needs an idle, not just a reaction.** With a still image and silence, whatever is
+driven purely by audio simply stops. Measured as mean pixel change over a second with the audio
+frozen, Poster was rendering an identical frame forever (0.00) and Cyanotype and Ripple were close
+to it. Each now carries a slow clock of its own — Poster's rows sway and its cells breathe across
+the reveal threshold, Cyanotype's coating wash creeps and its exposure breathes, Ripple keeps a
+visible base swell — so a still cover is alive before a note plays. Video sources hide this
+entirely, which is why it only shows on stills.
+
 **Motion rate is almost independent of sustained loudness.** Music is loud continuously, so tying
 speed to level produces constant fast movement that reads as unrelated to the sound — it drowns out
 the part that is actually reacting. Idle drift is very slow; transients do the moving.

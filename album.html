@@ -643,7 +643,11 @@ function drawPoster(dt) {
   // Fraction of cells to draw, from a sparse handful in near-silence to the
   // full composition at peak.
   const fill = resp(A.level);
-  const frac = Math.min(0.94, 0.045 + Math.pow(fill, 1.55) * 0.68 + A.beat * 0.10);
+  // Slow breath so cells drift across the threshold on their own. Without
+  // an idle term Poster is genuinely static on a still image in silence.
+  const breath = Math.sin(time * 0.062) * 0.5 + 0.5;
+  const frac = Math.min(0.94, 0.045 + Math.pow(fill, 1.55) * 0.68
+                              + A.beat * 0.10 + breath * 0.055);
   const sorted = POSTER.sorted;
   const cut = frac >= 0.999 ? -1 : sorted[Math.min(sorted.length - 1,
                 Math.floor((1 - frac) * sorted.length))];
@@ -652,7 +656,10 @@ function drawPoster(dt) {
     // Each row is displaced by one frequency band, so the picture shears
     // apart along the music instead of every block moving together.
     const e = resp(bandVal(r % 5));
-    const shove = (r % 2 ? 1 : -1) * (e * 0.20 + A.beat * 0.45) * cw * 2.4;
+    // Rows sway gently on their own clock, offset per row so the field
+    // never moves as one block.
+    const sway = Math.sin(time * 0.085 + r * 0.55) * 0.09;
+    const shove = (r % 2 ? 1 : -1) * (e * 0.20 + A.beat * 0.45 + sway) * cw * 2.4;
     // Overscan by two cells each side. A shoved row would otherwise pull away
     // from the screen edge and expose the ground colour — the same gap that
     // made Swirl look like it was punched through to the background.
@@ -672,7 +679,8 @@ function drawPoster(dt) {
       const pb = pal[2] + (POSTER.rgb[idx*3 + 2] - pal[2]) * k;
       // Blocks grow toward their neighbours on transients and open up gaps
       // of the ground colour when the music is quiet.
-      const grow = (0.50 + ease * 0.55) * (1 + e * 0.28 + A.beat * 0.45);
+      const grow = (0.50 + ease * 0.55) *
+                   (1 + e * 0.28 + A.beat * 0.45 + Math.sin(time * 0.11 + r * 0.4) * 0.05);
       const bw = cw * grow, bh = ch * grow;
       const lx = c * cw + shove - (bw - cw) / 2;
       const ly = r * ch - (bh - ch) / 2;
