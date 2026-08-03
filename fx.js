@@ -18,9 +18,16 @@
 
 const FX = {
   canvas: null, gl: null, prog: null, tex: null, u: {}, ok: false,
-  texAspect: 1, sized: [0, 0],
+  texAspect: 1, sized: [0, 0], mode: 0, cssW: 0, cssH: 0,
 
-  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4 },
+  // Blur is a deep defocus: by construction it carries no detail above a few
+  // pixels, so it does not need the backing store a look that resamples the
+  // image sharply does. Two thirds the width is under half the pixels, and
+  // the only visible consequence is that the emulsion grain lands coarser —
+  // which is closer to the references than the fine grain was.
+  MODE_SCALE: { 5: 0.68 },
+
+  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5 },
 
   init(canvasEl) {
     if (this.ok) return true;
@@ -382,7 +389,7 @@ const FX = {
         // paper, exposure, the water wash where the blue arrives, the
         // deepening as it oxidises — is reachable in either direction.
         // ================================================================
-        else {
+        else if (uMode == 4) {
           float proc = uDev;
 
           // The stages are ordered so that running *down* unwinds them in the
@@ -512,6 +519,78 @@ const FX = {
           col += max(0.0, halo) * 0.05 * wash;
         }
 
+        // ================================================================
+        // 5 — BLUR. The artwork as a photograph taken well out of focus:
+        // highlights swollen into soft masses, heavy emulsion grain, milky
+        // lifted shadows. Never resolves — the music moves how far out of
+        // focus it is, not whether it is.
+        // ================================================================
+        else {
+          // Slow parallax, so a still image is alive before a note plays.
+          vec2 par = vec2(sin(uTime * 0.037) * 0.016 + sin(uTime * 0.017) * 0.010,
+                          cos(uTime * 0.029) * 0.014 + cos(uTime * 0.013) * 0.009);
+
+          // Depth of field breathes. The shallow end is still a heavy
+          // defocus: this look is never allowed to resolve into the picture,
+          // because the moment it does it stops being this and starts being
+          // the artwork with a filter on it.
+          float r = 0.058 - uSwell * 0.030 + uBeat * 0.008;
+
+          // The disc is slightly elliptical and its axis turns slowly, so the
+          // bokeh smears along a direction that drifts instead of staying
+          // round — the streaking a long exposure leaves on water.
+          float ang = uTime * 0.031;
+          vec2 dirA = vec2(cos(ang), sin(ang));
+          vec2 dirB = vec2(-dirA.y, dirA.x);
+          float ecc = 1.0 + 0.5 * (0.5 + 0.5 * sin(uTime * 0.043));
+
+          // Bokeh, not blur, and this is the whole look. A lens does not
+          // average an out-of-focus highlight away — it spreads that light
+          // over a disc that stays bright, which is why defocused specular
+          // points read as glowing coins rather than as pale smudges.
+          // Weighting each sample by its own brightness before averaging
+          // reproduces that: bright shapes swell and hold their intensity,
+          // dark ones recede. A flat mean gives mush, and mush is what
+          // separates a blur filter from a photograph.
+          float a0 = hash(floor(vUv * uRes)) * 6.2831853;
+          float pw = 2.6 + uLevel * 1.5;      // louder blooms harder
+          vec3 acc = vec3(0.0);
+          float wsum = 0.0;
+          for (int i = 0; i < 18; i++){
+            float fi = float(i) + 0.5;
+            float rr = sqrt(fi / 18.0);
+            float a  = fi * 2.39996323 + a0;
+            vec2 o = (dirA * (cos(a) * ecc) + dirB * (sin(a) / ecc)) * rr * r;
+            vec3 sm = tex(coverUV(uv + o + par));
+            float lm = dot(sm, vec3(0.299, 0.587, 0.114));
+            float w = (0.16 + pow(lm, pw) * 2.6) * (1.0 - rr * 0.35);
+            acc += sm * w;
+            wsum += w;
+          }
+          col = acc / max(wsum, 0.0001);
+
+          // Milky shadows. Every one of the references sits its blacks well
+          // above zero — that lift is most of what reads as film rather than
+          // as a dimmed screen, and without it a soft image just looks murky.
+          col = col * 0.85 + 0.088;
+
+          // Slightly desaturated and a touch warm, for the dusty palette.
+          float g = dot(col, vec3(0.299, 0.587, 0.114));
+          col = mix(vec3(g), col, 0.78);
+          col *= vec3(1.045, 1.005, 0.945);
+
+          // Emulsion grain. Static — the picture passes through it, so it
+          // does not reseed per frame, which would sizzle. Heaviest through
+          // the midtones, the way real grain is: it has little to bite on at
+          // either extreme.
+          float gr = hash(floor(vUv * uRes));
+          float mid = 1.0 - abs(g - 0.5) * 1.6;
+          col += (gr - 0.5) * 0.155 * max(0.32, mid);
+
+          vec2 vc = (vUv - 0.5) * vec2(uRes.x / max(uRes.y, 1.0), 1.0);
+          col *= 1.0 - dot(vc, vc) * 0.15;
+        }
+
         col = clamp(col, 0.0, 1.0);
         gl_FragColor = vec4(col, 1.0);
       }`;
@@ -578,10 +657,21 @@ const FX = {
 
   resize(w, h) {
     if (!this.ok) return;
+    this.cssW = w; this.cssH = h;
+    this._applySize();
+  },
+
+  // Split out because the backing store depends on the look as well as on the
+  // window, so it has to be recomputed when the mode changes and not only
+  // when the window does. It early-outs on an unchanged size, so the common
+  // case still costs nothing.
+  _applySize() {
+    const w = this.cssW, h = this.cssH;
+    if (!this.ok || !w || !h) return;
     // Capped: these are full-screen per-pixel passes and a phone does not
     // need them at native retina resolution to look right.
     const maxW = w <= 820 ? 760 : 1180;
-    const s = Math.min(1, maxW / Math.max(1, w));
+    const s = Math.min(1, maxW / Math.max(1, w)) * (this.MODE_SCALE[this.mode] || 1);
     const cw = Math.max(2, Math.round(w * s)), ch = Math.max(2, Math.round(h * s));
     if (this.sized[0] === cw && this.sized[1] === ch) return;
     this.canvas.width = cw; this.canvas.height = ch;
@@ -608,6 +698,8 @@ const FX = {
     gl.useProgram(this.prog);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
+
+    if (p.mode !== this.mode) { this.mode = p.mode; this._applySize(); }
 
     gl.uniform1i(this.u.uTex, 0);
     gl.uniform2f(this.u.uRes, this.sized[0], this.sized[1]);

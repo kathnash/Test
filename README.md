@@ -27,12 +27,12 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
-Five looks are live. Three more — **Drift**, **Glitch** and **Marble** — are fully implemented but
-carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker without deleting any
-code. Removing that one word brings a look back.
+Six looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
+implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
+without deleting any code. Removing that one word brings a look back.
 
-Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Ripple, Ribbed, Marble, Lens and
-Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
+Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Ripple, Ribbed, Marble, Lens
+and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
 - **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
@@ -42,6 +42,9 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   by `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture). Rows shear apart along different
   frequency bands.
 - **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
+- **Blur** — the artwork as a photograph taken well out of focus: highlights swollen into soft
+  masses, heavy emulsion grain, milky lifted shadows. It never resolves — the music moves how far
+  out of focus it is, not whether it is. Replaced Swirl in the picker.
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
 - **Ripple** — refraction through a moving water surface. A height field is built from summed
   sines plus noise, the image is offset by its gradient, and the colour channels are split
@@ -75,6 +78,33 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### Blur is bokeh, not averaging
+
+The reference photographs share one thing that a blur filter does not do: **bright shapes swell and
+stay bright.** A lens does not average an out-of-focus highlight away — it spreads that light over a
+disc, which is why defocused specular points read as glowing coins rather than as pale smudges. A
+flat mean gives mush, and mush is the difference between a filter and a photograph.
+
+So each sample is weighted by its own brightness before averaging, on the same golden-angle spiral
+the Ribbed fix produced. Bright samples dominate their neighbourhood and swell; dark ones recede.
+The exponent rises with level, so louder passages bloom harder.
+
+Three other things carry it, all from the references rather than from the maths:
+
+- **Milky lifted blacks.** Every reference sits its shadows well above zero. Without that lift a soft
+  image just looks murky rather than filmic.
+- **Heavy static grain.** Static, not reseeded per frame — the picture passes through an emulsion.
+  Weighted toward the midtones, because real grain has little to bite on at either extreme.
+- **It never resolves.** The music moves the focus depth (measured: 21% more surviving structure
+  from silence to peak on a textured source) but the shallow end is still a heavy defocus. The moment
+  it resolves it stops being this look and becomes the artwork with a filter on it.
+
+**The backing store is per-look.** Blur has no detail above a few pixels by construction, so it does
+not need the resolution a look that resamples sharply does. At 0.68 width — under half the pixels —
+it went from **108ms to 51ms**, the most expensive shader look to the cheapest, and the only visible
+consequence is that the grain lands coarser, which is closer to the references than the fine grain
+was. The general form: **cost should follow the highest frequency a look can actually produce.**
 
 ### A ring of taps is not a blur
 
