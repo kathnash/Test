@@ -492,6 +492,8 @@ const LOOKS = [
   // Shader looks: the artwork is bent rather than painted over.
   { name:'Blur',   fx:'Blur'   },
   { name:'Punch',  fx:'Punch'  },
+  { name:'Dots',   fx:'Dots'   },
+  { name:'Fields', fx:'Fields' },
   { name:'Ripple', fx:'Ripple' },
   { name:'Ribbed', fx:'Ribbed' },
   { name:'Marble', fx:'Marble', hidden:true },
@@ -791,7 +793,7 @@ function drawFX(cfg) {
   FX.render({
     time, phase: ripplePhase, swell: rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
-    dev: cyanoDev,
+    dev: cyanoDev, shuffle: shufflePhase,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
     level: resp(A.level), beat: A.beat,
@@ -935,6 +937,9 @@ let last = performance.now(), videoClock = 0;
 // Integrated separately from `time` so the ripple surface can change speed
 // without its phase jumping.
 let ripplePhase = 0, rippleSwell = 0;
+// Dots' shuffle position. Integrated for the same reason the ripple phase is:
+// uTime * rate jumps every dot to a new step the instant the rate changes.
+let shufflePhase = 0;
 // How far the cyanotype has developed, 0..1. A state the music moves, not a
 // position on a clock: sound is light, so it exposes toward a finished blue
 // print and slides back toward the raw violet sheet in the quiet.
@@ -996,6 +1001,9 @@ function frame(now) {
 
   updateDrops(dt);
   ripplePhase += dt * (0.24 + resp(A.level) * 0.10);
+  // Roughly a dot every 4s at rest, several a second when it is loud. Each
+  // dot is offset within this by its own seed, so they take turns.
+  shufflePhase += dt * (0.26 + resp(A.level) * 0.55 + A.beat * 0.75);
 
   // Cyanotype's development. The music is the light source, so where the
   // print sits in the process is a function of the song rather than of

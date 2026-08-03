@@ -27,12 +27,12 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
-Seven looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
+Nine looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
 without deleting any code. Removing that one word brings a look back.
 
-Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Ripple, Ribbed, Marble,
-Lens and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
+Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields, Ripple,
+Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 
 **A second picture** can be loaded with the *2nd image…* chip — image or video, same as the first.
 Only Punch reads it today; the same button removes it. Everything derived from the artwork — the
@@ -50,6 +50,16 @@ second picture cannot change how any other look behaves.
 - **Blur** — the artwork as a photograph taken well out of focus: highlights swollen into soft
   masses, heavy emulsion grain, milky lifted shadows. It never resolves — the music moves how far
   out of focus it is, not whether it is. Replaced Swirl in the picker.
+- **Dots** — the photograph left alone under a little grain, with a field of flat coloured dots
+  scattered over it that reshuffle to the music. Each dot keeps its own clock, offset by a per-cell
+  seed, so they change one at a time rather than the whole field blinking together — that stagger is
+  the difference between shuffling and strobing. A dot fades out, moves, and fades back in; one that
+  teleports reads as a glitch.
+- **Fields** — torn-paper collage: organic blob cutouts on a paper ground, each a window onto the
+  photograph, some filled flat in the artwork's own colours. Outlines are three angular harmonics
+  with drifting phases, which gives a smooth closed curve that never settles for a few instructions
+  — an fbm around each rim would cost a dozen hashes per blob and this runs nine times per pixel.
+  Without the flat-colour shapes the whole sheet reads as one picture behind a mask.
 - **Punch** — a paper collage: one picture with a loose grid of hand-cut circular holes punched
   through it and a second picture showing through them. **The holes are a window onto one
   continuous photograph**, not a thumbnail repeated per circle — that is what makes it read as two
@@ -88,6 +98,31 @@ second picture cannot change how any other look behaves.
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### What actually limits how many looks there can be
+
+Worth being precise, because the intuition is wrong. **Runtime cost does not accumulate.** `uMode`
+is a uniform, so every pixel in a frame takes the same branch and the GPU only executes the branch
+for the look on screen. Adding a tenth look does not slow the other nine down. The evidence is in
+the sweep itself: with all nine live looks compiled into one program, Blur still measures 62ms
+against Fields' 120ms in the same run. If shader size were being paid per pixel they would converge,
+and they do not.
+
+Three things *do* accumulate, none of them close to binding:
+
+| | now | limit |
+|---|---|---|
+| active uniforms | 23 | ≥224 on real mobile hardware |
+| fragment shader source | 39.6 kB | compile+link is one-off at startup |
+| texture units | 2 | ≥8 guaranteed |
+
+So the ceiling is not structural, it is per-look: **sustained GPU load, which on a phone means heat
+rather than dropped frames.** The lever that matters is the one the Blur work found — backing store
+should follow the highest frequency a look can actually produce. Blur runs at 0.68 width and costs
+half what it did; any future look that is soft by construction can do the same.
+
+Numbers below are SwiftShader CPU raster, which is 10–30× slower than a phone GPU and drifts upward
+across a long sweep as the host warms, so **only the ordering within a single run is meaningful.**
 
 ### Two layers, and what a hole is a window onto
 

@@ -28,7 +28,7 @@ const FX = {
   // which is closer to the references than the fine grain was.
   MODE_SCALE: { 5: 0.68 },
 
-  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6 },
+  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6, Dots: 7, Fields: 8 },
 
   init(canvasEl) {
     if (this.ok) return true;
@@ -64,6 +64,7 @@ const FX = {
       uniform vec4  uDrops[4];     // x, y, age(sec), active
       uniform float uHasTex;
       // Second picture, for the looks that composite two sources.
+      uniform float uShuffle;  // integrated, not uTime * rate
       uniform sampler2D uTexB;
       uniform float uTexBAspect;
       uniform float uHasTexB;
@@ -73,6 +74,13 @@ const FX = {
         vec3 c = uPal[0];
         for (int k = 0; k < 5; k++) { if (k == i) c = uPal[k]; }
         return c;
+      }
+
+      // Saturated hue from a scalar. Cheaper than a full HSV conversion and
+      // this only ever needs full-saturation colours.
+      vec3 hue2rgb(float h){
+        vec3 p = abs(fract(h + vec3(0.0, 0.6667, 0.3333)) * 6.0 - 3.0);
+        return clamp(p - 1.0, 0.0, 1.0);
       }
 
       float hash(vec2 p){
@@ -616,7 +624,7 @@ const FX = {
         // photograph, not a per-circle thumbnail — that is what makes it
         // read as two sheets of paper rather than as a pattern.
         // ================================================================
-        else {
+        else if (uMode == 6) {
           float aspect = uRes.x / max(uRes.y, 1.0);
 
           // The two pictures drift against each other. The holes stay where
@@ -685,6 +693,137 @@ const FX = {
           col += (gr - 0.5) * 0.055;
         }
 
+        // ================================================================
+        // 7 — DOTS. The picture left alone under a little grain, with a
+        // field of flat coloured dots scattered over it that reshuffle to
+        // the music. Nothing else moves — the stillness of the photograph
+        // is what makes the dots read as laid on top of it.
+        // ================================================================
+        else if (uMode == 7) {
+          col = tex(coverUV(uv));
+
+          float aspect = uRes.x / max(uRes.y, 1.0);
+          vec2 gp = vec2(uv.x * aspect, uv.y);
+          float cell = aspect / 13.0;
+          vec2 base = floor(gp / cell);
+          float aa = cell * 0.020;
+
+          // Each dot keeps its own clock, offset by a per-cell seed, so they
+          // change one at a time rather than the whole field blinking
+          // together — that stagger is the difference between shuffling and
+          // strobing. Phase is integrated on the CPU: multiplying uTime by a
+          // rate would jump every dot to a new step the instant the music
+          // changed.
+          for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+              vec2 id = base + vec2(float(dx), float(dy));
+              float seed = hash(id * 1.7 + 0.5);
+              float t = uShuffle + seed * 13.0;
+              float stp = floor(t), fr = fract(t);
+
+              vec2 j = vec2(hash(id + stp * 1.7), hash(id + stp * 3.1)) - 0.5;
+              vec2 c = (id + 0.5) * cell + j * cell * 0.66;
+
+              // Fade out, move, fade back in. A dot that teleports reads as a
+              // glitch; a dot that dissolves and reappears reads as a shuffle.
+              float a = smoothstep(0.0, 0.16, fr) * (1.0 - smoothstep(0.84, 1.0, fr));
+
+              float hs = hash(id + stp * 5.3);
+              float v  = hash(id + stp * 8.9);
+              vec3 dc = hue2rgb(hs);
+              dc = mix(dc, vec3(1.0), 0.10 + v * 0.22);          // not all full chroma
+              dc = mix(dc, vec3(0.055), step(v, 0.11));           // a few near-black
+              dc = mix(dc, vec3(0.95), step(0.11, v) * step(v, 0.20));
+
+              float rr = cell * (0.115 + hash(id + 2.2) * 0.055) * (0.92 + uBeat * 0.16);
+              float d = length(gp - c);
+              col = mix(col, dc, (1.0 - smoothstep(rr - aa, rr + aa, d)) * a);
+            }
+          }
+
+          float gr = hash(floor(vUv * uRes / 1.25));
+          col += (gr - 0.5) * 0.062;
+        }
+
+        // ================================================================
+        // 8 — FIELDS. Torn-paper collage: organic blob cutouts on a paper
+        // ground, each one a window onto the photograph, some filled flat
+        // in the artwork's own colours. The outlines morph slowly, so the
+        // shapes look cut by hand and never settle.
+        // ================================================================
+        else {
+          vec3 paper = vec3(0.945, 0.937, 0.921);
+          col = paper;
+
+          float aspect = uRes.x / max(uRes.y, 1.0);
+          vec2 gp = vec2(uv.x * aspect, uv.y);
+          // Wide, short cells: every shape in the reference is a horizontal
+          // band, far wider than it is tall.
+          vec2 cell = vec2(aspect / 2.1, 1.0 / 5.2);
+          vec2 base = floor(gp / cell);
+
+          vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
+                   * (0.6 + uLevel * 0.8);
+
+          // Nearest blob wins, so overlapping shapes resolve to one surface
+          // instead of blending into each other. Evaluated over a 3x3
+          // neighbourhood: testing only the cell a pixel falls in clips every
+          // shape at the cell wall, which is what turned Marble into a sliced
+          // grid the moment anything grew.
+          float bestIn = 0.0;
+          vec2  bestId = base;
+          float bestD = 1e9;
+          for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+              vec2 id = base + vec2(float(dx), float(dy));
+              vec2 c = (id + 0.5) * cell
+                     + (vec2(hash(id + 0.7), hash(id + 4.9)) - 0.5) * cell * vec2(0.55, 0.45);
+              // Bands drift sideways at their own pace.
+              c.x += sin(uTime * (0.021 + hash(id + 8.1) * 0.018) + hash(id) * 6.3)
+                   * cell.x * 0.13;
+
+              vec2 d = gp - c;
+              // Flattened, because these are lying-down shapes.
+              vec2 e = vec2(d.x, d.y * 2.15);
+              float ang = atan(e.y, e.x);
+              float len = length(e);
+
+              // Three angular harmonics with drifting phases. A sum of sines
+              // gives a smooth closed outline for a few instructions, where an
+              // fbm around the rim costs a dozen hashes per blob and this runs
+              // nine times per pixel.
+              float s1 = hash(id + 1.1) * 6.28, s2 = hash(id + 2.3) * 6.28,
+                    s3 = hash(id + 3.5) * 6.28;
+              float w = sin(ang * 2.0 + s1 + uTime * 0.055) * 0.17
+                      + sin(ang * 3.0 - s2 - uTime * 0.039) * 0.11
+                      + sin(ang * 5.0 + s3 + uTime * 0.028) * 0.055;
+
+              float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
+                        * (0.95 + uSwell * 0.13);
+              float sd = len - rad;                 // <0 inside
+              if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
+            }
+          }
+
+          if (bestIn > 0.5) {
+            float kind = hash(bestId + 6.6);
+            vec3 shot = tex(coverUV(uv + par));
+            // A few shapes are flat colour rather than photograph — the
+            // reference alternates them, and without the flat ones the whole
+            // sheet reads as one picture behind a mask.
+            vec3 flat3 = palAt(int(mod(hash(bestId + 9.4) * 5.0, 5.0)));
+            flat3 = mix(flat3, paper, 0.30);
+            float lm = dot(flat3, vec3(0.299, 0.587, 0.114));
+            flat3 = mix(vec3(lm), flat3, 0.62);
+            col = mix(shot, flat3, step(kind, 0.30));
+            // Just inside the cut, a hint of the paper's thickness.
+            col *= 1.0 - smoothstep(-cell.x * 0.030, 0.0, bestD) * 0.12;
+          }
+
+          float gr = hash(floor(vUv * uRes / 1.3));
+          col += (gr - 0.5) * 0.045;
+        }
+
         col = clamp(col, 0.0, 1.0);
         gl_FragColor = vec4(col, 1.0);
       }`;
@@ -718,7 +857,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uDev','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uDev','uShuffle','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -838,6 +977,7 @@ const FX = {
     gl.uniform1f(this.u.uLumHi, p.lumHi);
     gl.uniform1f(this.u.uMedNorm, p.medianNorm);
     gl.uniform1f(this.u.uDev, p.dev);
+    gl.uniform1f(this.u.uShuffle, p.shuffle);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);
