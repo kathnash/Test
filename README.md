@@ -34,6 +34,12 @@ without deleting any code. Removing that one word brings a look back.
 Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields, Ripple,
 Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 
+**Tone** — Cyanotype's chemistry and Fields' ground both take a tone from the *Tone* chip: Blue
+(the original cyanotype), Green, Yellow or Red. One choice sets the whole ramp rather than exposing
+shadows and highlights separately — the four printed tones follow a hue arc, not a straight line
+from paper to deep, and two independent pickers would let that arc be broken in ways no darkroom
+process produces. The chip only appears on the two looks that read it.
+
 **A second picture** can be loaded with the *2nd image…* chip — image or video, same as the first;
 the same button removes it. **Every live look has a two-image behaviour**, and none of them require
 it: with one picture loaded they all work exactly as before.
@@ -43,11 +49,11 @@ it: with one picture loaded they all work exactly as before.
 | Poster | a wandering *cluster* of layer-two cells that bursts open on a transient |
 | Blur | an upright oval of layer two floating centre-frame, defocused by the same kernel |
 | Punch | layer two shows through the cut holes |
-| Dots | some of the dots are lifted straight out of layer two |
+| Dots | every dot takes its colour from layer two; the invented hues are the no-second-picture default |
 | Fields | some of the cutouts are layer two |
-| Ripple | ink dropped in water — a plume of layer two with fingers, spreading on the swell |
+| Ripple | ink dropped in water — absent when quiet, arriving as a droplet, spreading and dispersing with the swell |
 | Ribbed | the two ride a conveyor behind the glass, one panel per screen width, running left |
-| Lens | some circles hold layer two, scattered by a per-circle hash |
+| Lens | circles trade pictures on a music-driven shuffle, each on its own clock, crossfaded |
 | Cyanotype | a square inset of layer two, printed through the same burn and wash |
 
 - **Drift** — calm ambient colour fields
@@ -109,6 +115,36 @@ it: with one picture loaded they all work exactly as before.
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### A lens inverts, and a conveyor cannot
+
+Ribbed's flute is a real cylindrical lens, and the inversion is what makes a subject drifting behind
+a static pane read as glass: things slide backwards within each rib and jump between them. Put two
+pictures on a conveyor behind that pane and the inversion turns into a fight — **the panels travel
+one way while the content inside every rib travels the other**, and the eye reads the conflict long
+before it reads the glass.
+
+Reversing the belt does not fix it, because the panel seam and the rib content are both driven by
+the same coordinate: flipping it mirrors both and the disagreement survives. The two are only
+reconcilable by dropping the inversion, so the belt gets the uninverted mapping and the
+single-image pane — which has no belt to disagree with — keeps it. Measured by cross-correlating
+frames 2.5s apart, the frame now moves a clean −23px: one direction, leftward.
+
+### An ink drop has to be able to leave
+
+Ripple's second picture was a shape whose radius tracked the swell, which meant it was always there,
+just larger or smaller. What it needed was to be **absent below a threshold** and to *disperse*
+rather than shrink on the way out.
+
+Absence is a floor: `ink = (swell − 0.12) / 0.72`, clamped, so quiet water is clean water. Dispersal
+is the more interesting half. The plume is a domain warp — noise applied to the sample position
+before its distance is measured, which is what grows fingers where modulating a radius by angle only
+ever gives a lumpy circle. Giving the **warp a floor while the radius has none** is what makes it
+wisp: as the drop shrinks, the noise stops being a perturbation of a disc and becomes most of the
+shape, so it breaks up and disperses instead of contracting as a solid blob.
+
+Measured as the fraction of frame that is the second picture: 0% at rest, 1.7% at a quarter level,
+8%, 26%, 44% at peak.
 
 ### Three ways a grid loop can be wrong
 

@@ -74,6 +74,13 @@ const FX = {
       // differently, which is most of the time.
       uniform float uLumLoB, uLumHiB, uMedNormB;
       uniform float uMorph;    // integrated, not uTime * rate
+      // Cyanotype's four printed tones and its three unwashed coating tones,
+      // plus Fields' ground. Passed rather than derived from a single colour
+      // because the blue palette follows a hue arc, not a straight line from
+      // paper to deep — mixing two endpoints does not reproduce it.
+      uniform vec3 uTPaper, uTLight, uTMid, uTDeep;
+      uniform vec3 uCPale, uCMid, uCDeep;
+      uniform vec3 uFieldBg;
       uniform sampler2D uTexB;
       uniform float uTexBAspect;
       uniform float uHasTexB;
@@ -276,13 +283,22 @@ const FX = {
             // a lumpy circle. The fingers lengthen away from the centre
             // because the warp is scaled by distance, the way a drop trails
             // as it spreads.
-            float prad = 0.030 + uSwell * 0.165;
+            // Nothing at all below a threshold, so quiet leaves the water
+            // clean. Above it the drop arrives small and spreads.
+            float ink = clamp((uSwell - 0.12) / 0.72, 0.0, 1.0);
+            float prad = ink * 0.30;
             vec2 wq = pd * 5.0 + vec2(uTime * 0.055, uTime * -0.042);
             float n1 = fbm(wq);
             float n2 = fbm(wq * 1.7 + 19.0);
             float reach = clamp(length(pd) / max(prad, 0.001), 0.0, 1.6);
-            vec2 warped = pd + (vec2(n1, n2) - 0.5) * prad * (0.55 + reach * 0.95);
-            pud = 1.0 - smoothstep(prad * 0.86, prad, length(warped) + h * 0.016);
+            // The warp keeps a floor while the radius does not, so on the way
+            // down the noise stops being a perturbation of a disc and becomes
+            // most of the shape — it breaks into wisps and disperses instead
+            // of shrinking as a solid blob.
+            float warp = prad * (0.42 + reach * 0.80) + 0.028 * sqrt(ink);
+            vec2 warped = pd + (vec2(n1, n2) - 0.5) * warp;
+            pud = (ink <= 0.001) ? 0.0
+                : 1.0 - smoothstep(prad * 0.80, prad, length(warped) + h * 0.016);
           }
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -321,7 +337,15 @@ const FX = {
           // jump between them — without it you get stripes, not glass.
           float lensF = sin(f * 1.5707963);        // cylindrical, not linear
           float mag   = 0.38;               // lens geometry is fixed too
-          float sx    = (rib + 0.5) / cols - lensF * (0.5 / cols) * mag;
+          // The flute inverts what it shows, and that inversion is what makes
+          // a subject drifting behind a static pane read as glass. On the
+          // conveyor it fights the belt: the panels travel one way while the
+          // content inside every rib travels the other, and the eye reads the
+          // conflict long before it reads the glass. The belt gets the
+          // uninverted mapping so the two run together; the single-image pane
+          // keeps the inversion, where there is no belt to disagree with.
+          float inv = uHasTexB > 0.5 ? 1.0 : -1.0;
+          float sx  = (rib + 0.5) / cols + inv * lensF * (0.5 / cols) * mag;
 
           // The subject behind the glass drifts and sways instead: a slow
           // parallax that the music pushes, so depth changes without the pane
@@ -474,9 +498,19 @@ const FX = {
             centre.x /= ar;
             vec2 suv = centre + warped * (0.5 / grid) * vec2(1.0 / ar, 1.0)
                               * (1.15 + uBass * 0.18);
-            // Some circles hold the second picture, chosen per circle by a
-            // hash so the two scatter through the grid rather than banding.
-            col = pick(suv, uHasTexB > 0.5 ? step(hash(cell + 3.3), 0.42) : 0.0);
+            // Which circles hold the second picture is reshuffled by the
+            // music rather than fixed for the session. Each circle runs the
+            // shuffle clock on its own offset, so a loud passage trades a
+            // scattering of them rather than flipping the grid at once, and
+            // the last fifth of each step crossfades so nothing pops.
+            float selB = 0.0;
+            if (uHasTexB > 0.5) {
+              float sp = uShuffle * 0.42 + hash(cell + 5.5) * 9.0;
+              float k0 = step(hash(cell + floor(sp) * 2.7), 0.42);
+              float k1 = step(hash(cell + (floor(sp) + 1.0) * 2.7), 0.42);
+              selB = mix(k0, k1, smoothstep(0.80, 1.0, fract(sp)));
+            }
+            col = pick(suv, selB);
 
             // The artwork's own colours, lifted slightly rather than remapped
             // through a duotone — the duotone read as a filter over the image
@@ -613,9 +647,9 @@ const FX = {
 
           // Coated and exposed but not yet rinsed: dusty violet, and low in
           // contrast, because the Prussian blue has not formed yet.
-          vec3 uP = vec3(0.815, 0.755, 0.800);
-          vec3 uM = vec3(0.560, 0.480, 0.575);
-          vec3 uD = vec3(0.330, 0.270, 0.395);
+          vec3 uP = uCPale;
+          vec3 uM = uCMid;
+          vec3 uD = uCDeep;
           vec3 unwashed = v < 0.5 ? mix(uP, uM, v / 0.5) : mix(uM, uD, (v - 0.5) / 0.5);
 
           // Rinsed: the unexposed sensitiser washes off to bare paper and the
@@ -624,10 +658,13 @@ const FX = {
           // deepening in the palette's dark end, rather than in gamma alone,
           // is what makes the difference between a verse and a chorus visible
           // — gamma on its own moved the mean frame colour by about a unit.
-          vec3 wP = vec3(0.878, 0.918, 0.965);
-          vec3 wL = mix(vec3(0.660, 0.762, 0.874), vec3(0.596, 0.729, 0.867), deepen);
-          vec3 wB = mix(vec3(0.226, 0.352, 0.630), vec3(0.114, 0.208, 0.545), deepen);
-          vec3 wD = mix(vec3(0.150, 0.220, 0.470), vec3(0.055, 0.080, 0.300), deepen);
+          // A freshly rinsed print is lighter and greyer; oxidising drives it
+          // to full strength. The undeepened end is the tone lifted toward
+          // the paper, so a new tone needs only its four printed colours.
+          vec3 wP = uTPaper;
+          vec3 wL = mix(mix(uTLight, uTPaper, 0.20), uTLight, deepen);
+          vec3 wB = mix(mix(uTMid,   uTPaper, 0.26), uTMid,   deepen);
+          vec3 wD = mix(mix(uTDeep,  uTPaper, 0.22), uTDeep,  deepen);
           vec3 washed;
           if (v < 0.34)      washed = mix(wP, wL, v / 0.34);
           else if (v < 0.72) washed = mix(wL, wB, (v - 0.34) / 0.38);
@@ -773,7 +810,13 @@ const FX = {
 
           // Square-ish grid units, so circles stay circles on any screen.
           vec2 gp = vec2(uv.x * aspect, uv.y);
-          float cell = aspect / 3.0;            // three across, as in both references
+          // Three across in portrait, as in both references. A fixed column
+          // count leaves a landscape window with barely six holes in it,
+          // because the rows are what fall away as the frame gets shorter —
+          // so the count opens up with the aspect. Continuous in aspect, and
+          // aspect only changes on a resize, so there is no quantised
+          // geometry riding a live signal here.
+          float cell = aspect / (3.0 + smoothstep(0.75, 1.60, aspect) * 1.6);
 
           // Only the radius breathes with the music, never the grid: a count
           // driven through floor() snaps the whole sheet to a new layout every
@@ -882,6 +925,7 @@ const FX = {
               float rr = cell * (0.115 + hash(id + 2.2) * 0.055) * (0.92 + uBeat * 0.16);
               float d = length(gp - c);
               float m = (1.0 - smoothstep(rr - aa, rr + aa, d)) * a;
+              vec2 dotUv = vec2(c.x / aspect, c.y);
 
               // Dots are small and most pixels are covered by none of the
               // nine, so the sampling only runs where one lands — which is
@@ -899,7 +943,6 @@ const FX = {
                 // absent one reads as the field having moved on. So each
                 // reshuffle leaves the survivors collected on the shapes, and
                 // they migrate as the shapes do.
-                vec2 dotUv = vec2(c.x / aspect, c.y);
                 vec3 under = tex(coverUV(dotUv));
                 float step1 = cell / aspect;
                 float con = 0.0;
@@ -917,11 +960,11 @@ const FX = {
                 dc = mix(dc, vec3(1.0), 0.10 + v * 0.22);        // not all full chroma
                 dc = mix(dc, vec3(0.055), step(v, 0.11));         // a few near-black
                 dc = mix(dc, vec3(0.95), step(0.11, v) * step(v, 0.20));
-                // With a second picture loaded, some dots are lifted straight
-                // out of it — one flat sample each, so they stay dots.
-                if (uHasTexB > 0.5 && hash(id + stp * 6.1) < 0.38) {
-                  dc = texB(coverUVB(vec2(c.x / aspect, c.y)));
-                }
+                // With a second picture loaded every dot is lifted out of it —
+                // one flat sample each, so they stay dots. The invented
+                // colours are what this look does when there is nothing else
+                // to take colour from, not something to mix into a picture.
+                if (uHasTexB > 0.5) dc = texB(coverUVB(dotUv));
                 col = mix(col, dc, m);
               }
             }
@@ -938,7 +981,7 @@ const FX = {
         // shapes look cut by hand and never settle.
         // ================================================================
         else {
-          vec3 paper = vec3(0.945, 0.937, 0.921);
+          vec3 paper = uFieldBg;
           col = paper;
 
           float aspect = uRes.x / max(uRes.y, 1.0);
@@ -1052,7 +1095,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -1174,6 +1217,15 @@ const FX = {
     gl.uniform1f(this.u.uDev, p.dev);
     gl.uniform1f(this.u.uShuffle, p.shuffle);
     gl.uniform1f(this.u.uMorph, p.morph);
+    const T = p.tone;
+    gl.uniform3fv(this.u.uTPaper, T.paper);
+    gl.uniform3fv(this.u.uTLight, T.light);
+    gl.uniform3fv(this.u.uTMid,   T.mid);
+    gl.uniform3fv(this.u.uTDeep,  T.deep);
+    gl.uniform3fv(this.u.uCPale,  T.coatPale);
+    gl.uniform3fv(this.u.uCMid,   T.coatMid);
+    gl.uniform3fv(this.u.uCDeep,  T.coatDeep);
+    gl.uniform3fv(this.u.uFieldBg, T.bg);
     gl.uniform1f(this.u.uLumLoB, p.lumLoB);
     gl.uniform1f(this.u.uLumHiB, p.lumHiB);
     gl.uniform1f(this.u.uMedNormB, p.medianNormB);
