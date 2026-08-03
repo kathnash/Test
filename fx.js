@@ -49,7 +49,7 @@ const FX = {
       uniform float uSwell;   // slow envelope for refraction depth
       uniform float uLumLo, uLumHi;  // source's 8th/92nd luminance percentiles
       uniform float uMedNorm;        // its median within that range
-      uniform float uCycle;          // 0..1 through the cyanotype process
+      uniform float uDev;            // 0..1 cyanotype development, driven by the music
       uniform int   uMode;
       uniform float uBass, uMid, uHigh, uLevel, uBeat;
       uniform vec3  uPal[5];
@@ -359,33 +359,31 @@ const FX = {
         }
 
         // ================================================================
-        // 4 — CYANOTYPE. Runs the actual process on a loop: coated paper,
-        // exposure, the water wash where the blue arrives, then the slow
-        // deepening as it oxidises — and back. The music is the light
-        // source, so louder passages burn the print faster.
+        // 4 — CYANOTYPE. Runs the actual process, but the music is the light
+        // source and the position in the process is a *state*, not a clock:
+        // sound exposes the print toward a finished blue, and in the quiet it
+        // slides back toward the raw violet sheet. The whole arc — coated
+        // paper, exposure, the water wash where the blue arrives, the
+        // deepening as it oxidises — is reachable in either direction.
         // ================================================================
         else {
-          float c = uCycle;
+          float proc = uDev;
 
-          // Each stage returns to zero by the end of the cycle, so the state
-          // at c = 1 is identical to the state at c = 0 and the loop closes
-          // without a seam. Every edge is a smoothstep, so the slope is zero
-          // at the wrap too, not just the value; nothing switches.
-          //
-          // Burn in to 0.26, rinse to 0.46, deepen to 0.66, sit at full depth,
-          // then sink back into the sheet over the last quarter.
-          float expose = smoothstep(0.03, 0.26, c);
-          float wash   = smoothstep(0.28, 0.46, c);
-          float deepen = smoothstep(0.46, 0.66, c);
-
-          // The return is a blend of the finished colour back toward bare
-          // paper, not the exposure being wound down. Unwinding the exposure
-          // drags v back through the steep part of the blue ramp, so an even
-          // ramp in c comes out as a lurch on screen; blending the colour is
-          // even by construction. It also closes the loop: settle reaches 1
-          // exactly as c reaches 1, leaving the same coated sheet the cycle
-          // started on, with the slope at zero on both sides of the wrap.
-          float settle = smoothstep(0.76, 1.00, c);
+          // The stages are ordered so that running *down* unwinds them in the
+          // order that stays smooth: depth first, then the blue draining back
+          // to violet, and only then the image fading off the paper. Coming
+          // down, unwinding the exposure while the print is still blue would
+          // drag the tone through the steep part of the blue ramp and lurch;
+          // by the time exposure unwinds here, the palette is the gentle
+          // violet one. Every edge is a smoothstep, so the direction can
+          // reverse anywhere without a corner.
+          // Deepening gets the whole top half of the range. When it shared the
+          // range evenly the print was fully blue by 0.6 and the last 40% of
+          // the scale changed nothing measurable — a verse and a chorus landed
+          // on the same frame.
+          float expose = smoothstep(0.02, 0.28, proc);
+          float wash   = smoothstep(0.30, 0.56, proc);
+          float deepen = smoothstep(0.52, 1.00, proc);
 
           vec2 drift = vec2(sin(uTime * 0.041) * 0.6 + sin(uTime * 0.017) * 0.4,
                             cos(uTime * 0.033) * 0.6 + cos(uTime * 0.013) * 0.4) * 0.030;
@@ -397,6 +395,31 @@ const FX = {
           float coat = fbm(cp + vec2(uTime * 0.020, uTime * -0.014) + 4.0);
           lum += (coat - 0.5) * 0.15;
 
+          // Dappled light: sun through leaves moving across the sheet. This is
+          // what the print has to look at when the music goes quiet, so it is
+          // scaled by how quiet things are and disappears under the pulsing
+          // once the music takes over — otherwise it would compete with it.
+          //
+          // The sway is applied to the *sample coordinate*, not to the result,
+          // so the pattern rocks like a branch instead of the whole frame
+          // sliding. Two incommensurate periods keep it from reading as a loop.
+          // Travel is what makes this read as movement — amplitude alone just
+          // makes the frame breathe in place. The patches drift steadily
+          // across the sheet and the sway rocks them on top of that.
+          float calm = 1.0 - clamp(uLevel * 1.15, 0.0, 1.0);
+          float sway = sin(uTime * 0.129) * 0.6 + sin(uTime * 0.071 + 1.7) * 0.4;
+          vec2 lp = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 1.7;
+          lp += vec2(uTime * 0.017 + sway * 0.150, uTime * 0.006 + sin(uTime * 0.047) * 0.075);
+          lp += vec2(sin(lp.y * 2.9 + uTime * 0.16),
+                     cos(lp.x * 2.3 - uTime * 0.11)) * 0.09 * (0.6 + sway * 0.4);
+          // Sharpened into patches with soft edges. Raw fbm is a haze; leaf
+          // shadow has a shape.
+          float dapple = smoothstep(0.36, 0.70, fbm(lp + 31.0)) - 0.5;
+
+          // Light falling on the paper is light exposing it, so the dapple
+          // moves the exposure threshold as well as tinting the result. That
+          // is what makes it read as light on the sheet rather than a texture
+          // laid over the picture.
           float pol = uMedNorm > 0.5 ? 1.0 : -1.0;
 
           // Developer spreading from each transient.
@@ -417,13 +440,17 @@ const FX = {
           float bloom = uSwell * 0.13 + uBeat * 0.05 + breath + dev * 0.09;
           float expoT = uMedNorm + pol * (bloom - soft - 0.06);
 
+          // Where the light falls, the sheet exposes a little further. Small:
+          // this is a shadow moving over a print, not a second image.
+          expoT -= pol * dapple * 0.105 * calm;
+
           float s0 = smoothstep(expoT - soft, expoT + soft, lum);
           float v = pol > 0.0 ? s0 : 1.0 - s0;
 
           // The image burns in rather than being there from the start, and
           // keeps gaining depth after the wash as the pigment oxidises.
           v = clamp(v * expose, 0.0, 1.0);
-          v = pow(v, mix(1.0, 0.80, deepen));
+          v = pow(v, mix(1.0, 0.74, deepen));
 
           // Coated and exposed but not yet rinsed: dusty violet, and low in
           // contrast, because the Prussian blue has not formed yet.
@@ -433,11 +460,15 @@ const FX = {
           vec3 unwashed = v < 0.5 ? mix(uP, uM, v / 0.5) : mix(uM, uD, (v - 0.5) / 0.5);
 
           // Rinsed: the unexposed sensitiser washes off to bare paper and the
-          // blue arrives all at once.
+          // blue arrives all at once. A freshly rinsed print is a lighter,
+          // greyer blue; oxidising drives it to full Prussian. Carrying the
+          // deepening in the palette's dark end, rather than in gamma alone,
+          // is what makes the difference between a verse and a chorus visible
+          // — gamma on its own moved the mean frame colour by about a unit.
           vec3 wP = vec3(0.878, 0.918, 0.965);
-          vec3 wL = vec3(0.596, 0.729, 0.867);
-          vec3 wB = vec3(0.114, 0.208, 0.545);
-          vec3 wD = vec3(0.063, 0.094, 0.325);
+          vec3 wL = mix(vec3(0.660, 0.762, 0.874), vec3(0.596, 0.729, 0.867), deepen);
+          vec3 wB = mix(vec3(0.226, 0.352, 0.630), vec3(0.114, 0.208, 0.545), deepen);
+          vec3 wD = mix(vec3(0.150, 0.220, 0.470), vec3(0.055, 0.080, 0.300), deepen);
           vec3 washed;
           if (v < 0.34)      washed = mix(wP, wL, v / 0.34);
           else if (v < 0.72) washed = mix(wL, wB, (v - 0.34) / 0.38);
@@ -450,18 +481,19 @@ const FX = {
           float wet = wash * (1.0 - wash) * 4.0;
           col *= 1.0 + wet * 0.07;
 
-          // Back to the bare coated sheet.
-          col = mix(col, uP, settle);
-          float vs = v * (1.0 - settle);
+          // The same light, now as brightness on the sheet. Applied after the
+          // palette so it lifts and shades the print itself rather than
+          // pushing tones to a different blue.
+          col *= 1.0 + dapple * 0.23 * calm;
 
           // Paper fibre. Static, and heaviest where the pigment sits.
           float fib = hash(floor(vUv * uRes / 1.35));
-          col += (fib - 0.5) * (0.055 + vs * 0.11);
+          col += (fib - 0.5) * (0.055 + v * 0.11);
           float fib2 = fbm(vUv * uRes / 26.0);
           col *= 0.955 + fib2 * 0.09;
 
           float halo = 1.0 - abs(v - 0.34) * 3.4;
-          col += max(0.0, halo) * 0.05 * wash * (1.0 - settle);
+          col += max(0.0, halo) * 0.05 * wash;
         }
 
         col = clamp(col, 0.0, 1.0);
@@ -497,7 +529,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uCycle','uMode','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uDev','uMode','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -570,7 +602,7 @@ const FX = {
     gl.uniform1f(this.u.uLumLo, p.lumLo);
     gl.uniform1f(this.u.uLumHi, p.lumHi);
     gl.uniform1f(this.u.uMedNorm, p.medianNorm);
-    gl.uniform1f(this.u.uCycle, p.cycle);
+    gl.uniform1f(this.u.uDev, p.dev);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);

@@ -70,32 +70,77 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   pushes; without it the circles pulsed while the picture inside sat still, and the look read as
   decoration rather than as reactive. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
-- **Cyanotype** — a contact print, running the actual darkroom process on a loop: a dusty violet
-  coated sheet, the image burning in, the water wash where the Prussian blue arrives all at once,
-  then the slow deepening as the pigment oxidises, before it sinks back into the paper and starts
-  over. Exposure and edge softness both follow the music, so the pale shapes bloom and their edges
-  travel between crisp and dissolved.
+- **Cyanotype** — a contact print, running the actual darkroom process, with the music as the light
+  source. Sound exposes the sheet: a dusty violet coating, the image burning in, the water wash where
+  the Prussian blue arrives all at once, then the deepening as the pigment oxidises. Quiet reverses
+  it, so the print sinks back toward violet in the gaps and develops again when the song returns.
+  Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
+  edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
 
-### Cyanotype's process cycle
+### Cyanotype: the process is a state, not a cycle
 
-The music is the light source: `cyanoCycle` advances at `0.70 + level + beat`, so a loud passage
-burns the print in about 13s and silence takes about 37s. The rate is **integrated, not read off the
-clock** — the same rule the ripple phase needs — so a change in the music speeds the process up from
-wherever it has got to rather than teleporting it.
+The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
+was wrong for a reason worth keeping: **a clock will always eventually fade the print during a
+chorus.** Nothing about elapsed time knows whether the song is loud right now, so the moment the
+image chose to dissolve was uncorrelated with the music, and the look read as decorative rather than
+reactive however smooth the fade was.
 
-Closing the loop needs the state at `c = 1` to equal the state at `c = 0`, in value *and* slope, or
-the wrap reads as a cut. Every stage is a smoothstep, which is flat at both its ends, and the frame
-returns to bare paper before `c` wraps.
+`cyanoDev` is now a *position in the process* that the music moves in both directions. Sound is
+light, so it exposes the print toward a finished blue; quiet is the absence of light, so the print
+slides back toward the raw violet sheet. Fading only ever happens when the music is quiet, because
+quiet is the only thing that causes it.
 
-**The return has to be a colour blend, not the exposure wound backwards.** The first version faded
-`expose` back down, which is the obvious move and the wrong one: `expose` scales `v`, and the blue
-palette is far steeper near paper-white than it is in the deep end, so an even ramp in `c` came out
-as a lurch — a 33-unit jump in mean frame colour concentrated in a fifth of a second, against 8 and
-13 either side of it. The fade is now `mix(col, paper, settle)` applied to the finished colour, which
-is even by construction: 8/13/13/12/7/2 across the whole exit. Anything else keyed to the print —
-the fibre weighting, the wash halo — is scaled by `1 - settle` so it lands back on its `c = 0` value
-too. The general form: **when a ramp drives something through a non-linear map, the perceived rate is
-the map's slope, not the ramp's** — either linearise the map or move the ramp to where the map is flat.
+Two terms drive it: instantaneous `light`, and `cyanoSustain`, a 6s memory of it, so a section that
+stays loud pushes further than any single instant of it would while a stab in a quiet passage lifts
+the print and lets go. The follower is asymmetric and slow on both sides — 2.6s up, 7.0s down —
+because the *position* should follow the shape of the song, and beat-scale movement belongs to the
+pulsing highlights, which are a separate mechanism. Measured against a scripted song arc:
+
+| passage | `A.level` | settles at |
+|---|---|---|
+| silence | 0.00 | 0.06 — raw violet sheet |
+| quiet intro | 0.22 | 0.31 — violet print, pre-wash |
+| verse | 0.50 | 0.64 — washed, blue |
+| chorus | 0.85 | 1.00 — finished, deep |
+| breakdown | 0.05 | 0.28 — drifts back to violet |
+
+**Don't drive a full-range state through `resp()`.** That curve saturates hard by design — its job is
+to make quiet music move — and through it a quiet intro already read as half developed while an
+ordinary verse pinned the print at finished, so it never moved again. The development gets its own
+gentler curve, `pow(level * (0.55 + gain * 0.30), 0.80)`, which still honours the sensitivity setting
+but keeps the range. Same lesson as the soft-knee fix, from the other side: a curve tuned for
+sensitivity is not a curve tuned for range.
+
+**Stage order is what makes the retreat smooth.** Running down unwinds depth, then the blue draining
+back to violet, and only then the image fading off the paper. That ordering is load-bearing:
+unwinding the exposure while the print is still blue drags the tone through the steep part of the
+blue ramp and lurches — the earlier cyclical version hit a 33-unit jump in mean frame colour in a
+fifth of a second doing exactly that. By the time exposure unwinds here the palette is the gentle
+violet one, so no separate machinery is needed. The general form: **when a ramp drives something
+through a non-linear map, the perceived rate is the map's slope, not the ramp's** — either linearise
+the map or arrange for the ramp to move where the map is flat.
+
+**Deepening needs the top half of the range and a colour, not just a gamma.** Sharing the range
+evenly left the print fully blue by 0.6, and the last 40% of the scale changed nothing measurable —
+a verse and a chorus landed on the same frame. `deepen` now spans 0.52–1.00 and interpolates the
+palette's dark end from a fresh, greyer rinse to full Prussian, which moves measured contrast
+77 → 83 → 92 across dev 0.60 → 1.00.
+
+### Dappled light
+
+Silence used to mean stillness. The quiet end of the process now carries light through moving
+leaves — a sharpened fbm whose *sample coordinate* is swayed and drifted, so the patches rock and
+travel like branches rather than the whole frame breathing in place. Travel is the part that reads:
+amplitude alone is invisible at this subtlety.
+
+It feeds the exposure threshold as well as the final brightness, which is what makes it look like
+light falling on the sheet rather than a texture laid over the picture — where the light lands, the
+paper exposes a little further.
+
+It is gated by `1 - level`, so it fades out as the music takes over and never competes with the
+pulsing highlights the finished print is built around. Measured: 1.66 mean pixel change over 3s in
+silence against 0.76 at the same development with the music loud, while the pulsation at a finished
+print runs 2.89 per 220ms — three orders of pace apart, which is the intended hierarchy.
 
 The look button opens a picker; space steps through the live looks, skipping hidden ones.
 
