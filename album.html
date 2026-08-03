@@ -403,26 +403,36 @@ function loadImage(src, crossOrigin) {
   });
 }
 
-/* A stand-in cover so the page does something on first open. */
+/* A stand-in cover so the page does something on first open.
+
+   Red, green and blue only. The palette extractor takes five dominant
+   colours off this and every style paints with them, so any fourth hue in
+   here comes back as a fourth hue on screen. The ground is neutral for the
+   same reason, and the blobs are spaced so their soft edges barely meet: a
+   red and a green that overlap blend to yellow, which is exactly the colour
+   this is meant not to have. */
 function sampleArtwork() {
   const s = 600, cv = document.createElement('canvas');
   cv.width = cv.height = s;
   const x = cv.getContext('2d');
-  const bg = x.createLinearGradient(0, 0, s, s);
-  bg.addColorStop(0, '#1b1035'); bg.addColorStop(1, '#3d1220');
-  x.fillStyle = bg; x.fillRect(0, 0, s, s);
+  x.fillStyle = '#0d0d11'; x.fillRect(0, 0, s, s);
+  const R = '#ff2233', G = '#18d94a', B = '#2f5cff';
   const blobs = [
-    ['#ff5c7a', .30, .32, .30], ['#ffd166', .70, .28, .22],
-    ['#5ce1e6', .34, .72, .26], ['#8b5cf6', .74, .70, .28]
+    [R, .27, .28, .23], [G, .74, .27, .21], [B, .28, .73, .22],
+    [R, .77, .74, .18], [G, .50, .52, .16], [B, .52, .07, .13],
+    [R, .07, .50, .12], [G, .93, .52, .12]
   ];
   for (const [col, cx, cy, r] of blobs) {
+    // Solid to just past half the radius, then a soft rim. A pure radial
+    // falloff leaves most of each blob part-way between its hue and the
+    // ground, and a cell-based style has to pick one palette colour for each
+    // of those muddy in-betweens - which is where the olive squares in a
+    // red-green-blue picture came from.
     const gr = x.createRadialGradient(cx*s, cy*s, 0, cx*s, cy*s, r*s);
-    gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    gr.addColorStop(0, col); gr.addColorStop(0.74, col);
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
     x.fillStyle = gr; x.fillRect(0, 0, s, s);
   }
-  x.globalCompositeOperation = 'overlay';
-  x.fillStyle = '#fff';
-  x.beginPath(); x.arc(s*.5, s*.52, s*.19, 0, Math.PI*2); x.fill();
   return loadImage(cv.toDataURL());
 }
 
