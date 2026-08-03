@@ -95,7 +95,7 @@ const FX = {
           if (uDrops[i].w > 0.5){
             float d = distance(p, uDrops[i].xy);
             float age = uDrops[i].z;
-            h += sin(d * 26.0 - age * 9.0) * exp(-d * 2.6) * exp(-age * 1.4) * 0.8;
+            h += sin(d * 18.0 - age * 5.5) * exp(-d * 2.2) * exp(-age * 1.1) * 0.42;
           }
         }
         return h / 2.2;
@@ -162,11 +162,11 @@ const FX = {
           // fast rise moves every pixel of the image simultaneously — which
           // reads as a snap however smooth the underlying band is. Depth of
           // water should swell, not switch.
-          float amt = 0.0090 + uSwell * 0.0270;
+          float amt = 0.0105 + uSwell * 0.0165;
           vec2 off = grad * amt;
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
-          float disp = 1.0 + uHigh * 0.55;
+          float disp = 1.0 + uHigh * 0.30;
           col.r = tex(coverUV(uv + off * (1.0 + 0.07 * disp))).r;
           col.g = tex(coverUV(uv + off)).g;
           col.b = tex(coverUV(uv + off * (1.0 - 0.07 * disp))).b;

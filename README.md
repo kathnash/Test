@@ -36,14 +36,11 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 
 - **Drift** — calm ambient colour fields
 - **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
-  blocks. **How many appear is the animation**: about 5% of the most distinctive cells in
-  near-silence, 28% at half level, 73% at peak. The curve is concave and stops short of full, so it
-  holds the sparse state that reads best rather than filling at the first loud passage. Cells are
-  chosen by *rank*, not by a fixed strength
-  threshold — thresholding on the value left a gradient with one small subject empty at a level
-  that filled a busy cover completely. Each cell keeps both its nearest palette colour and its true
-  colour, blended by `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture). Rows shear apart
-  along different frequency bands.
+  blocks. **How many appear is the animation**, and *which cells can ever appear* is decided by the
+  frame's own content: a clear sky with kites in it draws the kites and leaves the sky flat, while a
+  busy cover fills in. Each cell keeps both its nearest palette colour and its true colour, blended
+  by `POSTER_IMAGE` (0 = pure palette, 1 = untouched picture). Rows shear apart along different
+  frequency bands.
 - **Swirl** — each frame is fed back rotated and slightly enlarged, so colour spirals outward
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
 - **Ripple** — refraction through a moving water surface. A height field is built from summed
@@ -76,6 +73,62 @@ Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### Poster picks cells by local contrast
+
+Selection used to be by **rank** — draw the top N% most distinctive cells, where distinctive meant
+"far from the image's average colour". Rank fixed a real problem (an absolute threshold left a
+gradient with one small subject empty at a level that filled a busy cover completely) and created a
+worse one: **rank always draws a fixed fraction, whatever is in the frame.** Point it at a clear sky
+with a few kites and the kites come first, then the next 20% of cells in line are all sky, and the
+background fills with faintly-different blue squares. There is no level at which it stops, because
+the fraction is the input.
+
+Three passes to get this right, each killed by the next:
+
+1. **Distance from the image mean, ranked.** The original. Fills any low-content frame.
+2. **Distance from the ground colour, as a z-score, with an absolute floor.** Much better — the sky
+   went flat and the kites stood alone. But a sky has a *gradient*, and its top and bottom are
+   genuinely far from any single ground colour, so a band of pale blue blocks appeared along the
+   bottom edge. No global colour can fix this; the frame does not have one background colour.
+3. **Local contrast** — how far a cell sits from its own neighbourhood. What makes something read as
+   a subject is that it differs from what is *around* it. A gradient matches its surroundings
+   everywhere, however far its top is from its bottom; a kite matches nothing near it.
+
+Local contrast then has its own trap, and it is the same trap as (2) one level down: **a mean is not
+robust to the outliers it is being used to find.** Taking each cell's distance from its
+neighbourhood *mean* let a single kite drag the mean of every neighbourhood it fell into, so the
+sky cells around it scored high too and every kite came out wearing a five-cell halo of sky-coloured
+blocks. Against a background this smooth there is no local variation for that contamination to hide
+in. The measure is the **median** distance to the 24 neighbours: the kite cell sees 24 neighbours of
+sky and scores high, the sky cell beside it sees 23 of sky and scores nothing. Insertion-sorted in
+place, since this runs per decoded video frame — `buildPoster` costs 1.84ms.
+
+Measured on a sky-with-kites frame, cells that can ever draw fell from 14.9% to 1.2%, and the screen
+stays flat ground at every level including full. On ordinary artwork it is unchanged in character —
+10.2% in silence, 18.6% at peak — because a busy frame has local contrast everywhere.
+
+### Ripple was saturated, not fast
+
+"Too frantic, too jumpy, too sensitive." Measured on ordinary music the depth envelope sat pinned
+between **0.80 and 0.97** — the water was always at full depth, and every bass transient was a jolt
+at the top of a range it had already run out of. It read as frantic because there was nothing left
+for it to do but twitch.
+
+The same `resp()` saturation as the Cyanotype development, and the same fix: its own gentler curve,
+`pow(bass * (0.50 + gain * 0.26), 0.85)`, which spreads the depth across 0.09 → 0.81 over the bass
+range. Four other things came down with it — the envelope from 0.18s/0.55s to 0.55s/1.30s, the
+reactive share of the displacement roughly halved, dispersion off the twitchy high band cut from
+0.55 to 0.30, and the base phase rate slowed.
+
+**A ring on every beat is a barrage.** Rings fired on every detected onset, four alive at once, so
+on anything with a fast beat the surface never settled between them — four overlapping ring trains
+is most of what "frantic" meant. There is now a 1.15s floor on the gap, and the rings themselves are
+gentler and slower (amplitude 0.8 → 0.42, spatial frequency 26 → 18). Over 20s at 150bpm: 49 beats
+now launch 12 rings rather than 49.
+
+Net, on the same clip: on-screen change per frame **mean 6.11 → 3.22, peak 6.85 → 3.61**, and the
+worst per-frame step in the depth envelope 0.0384 → 0.0131.
 
 ### Cyanotype: the process is a state, not a cycle
 

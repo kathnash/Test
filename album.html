@@ -507,11 +507,16 @@ const bandVal = i => [A.bass, A.mid, A.high, A.air, A.level][i] || 0;
 
 /* Shared by Ripple (expanding rings) and Marble (ink pushing the pattern
    outward). Four at a time is all the shader carries. */
-let drops = [];
+let drops = [], lastDrop = -9;
 function updateDrops(dt) {
   for (const d of drops) d.age += dt;
   drops = drops.filter(d => d.age < 6);
-  if (A.beatFlash > 0.9) {
+  // A ring on every beat is a barrage: on anything with a fast or strong beat
+  // the surface never gets to settle between them, and four overlapping ring
+  // trains is most of what made Ripple feel frantic. One at a time, with a
+  // floor on the gap, so a ring reads as an event.
+  if (A.beatFlash > 0.9 && time - lastDrop > 1.15) {
+    lastDrop = time;
     drops.push({ x: 0.15 + Math.random() * 1.2, y: Math.random(), age: 0 });
     if (drops.length > 4) drops.shift();
   }
@@ -593,19 +598,63 @@ function buildPoster() {
     // blocks can be blended back toward the actual picture instead of being
     // limited to five flat tones.
     const rgb = new Uint8Array(cols * rows * 3);
-    // How far each cell departs from the image's average colour. This is what
-    // decides which cells survive when the music is quiet — the subject of a
-    // cover stands out from its background, the background does not.
-    const str = new Float32Array(cols * rows);
-    let mr = 0, mg = 0, mb = 0;
-    for (let i = 0; i < cols * rows; i++) { mr += d[i*4]; mg += d[i*4+1]; mb += d[i*4+2]; }
-    mr /= cols * rows; mg /= cols * rows; mb /= cols * rows;
-    let maxD = 1e-6;
-    for (let i = 0; i < cols * rows; i++) {
-      const dd = Math.hypot(d[i*4] - mr, d[i*4+1] - mg, d[i*4+2] - mb);
-      str[i] = dd; if (dd > maxD) maxD = dd;
+    // How far each cell departs from its own neighbourhood — local contrast,
+    // not distance from any single global colour. What makes something read
+    // as a subject is that it differs from what is around it: a kite does not
+    // match the sky next to it, while a clear sky matches its surroundings
+    // everywhere no matter how far its top is from its bottom. Measured
+    // against a global colour instead, the extremes of a gradient score as
+    // highly as the subject does, which is what laid a band of pale blue
+    // squares along the bottom of a sky.
+    // Specifically the *median* distance to the neighbours, not the distance
+    // to their mean. A mean is not robust to the very outliers this is trying
+    // to find: a single kite cell drags the mean of every neighbourhood it
+    // falls in, so the sky cells around it scored high too and each kite came
+    // out wearing a five-cell halo of sky-coloured blocks. Against a
+    // background this smooth there is no local variation for that
+    // contamination to hide in. A median ignores a few odd neighbours by
+    // construction — the kite cell sees 24 neighbours of sky and scores high,
+    // while the sky cell beside it sees 23 of sky and scores nothing.
+    const n = cols * rows;
+    const R = 2;                    // neighbourhood radius, in cells
+    const str = new Float32Array(n);
+    const nb = new Float64Array((2*R + 1) * (2*R + 1));
+    let sum = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const i = r * cols + c, j = i * 4;
+        let k = 0;
+        for (let dy = -R; dy <= R; dy++) {
+          const yy = r + dy;
+          if (yy < 0 || yy >= rows) continue;
+          for (let dx = -R; dx <= R; dx++) {
+            const xx = c + dx;
+            if (xx < 0 || xx >= cols || (dx === 0 && dy === 0)) continue;
+            const q = (yy * cols + xx) * 4;
+            // Insertion sort as we go: the arrays are 24 long, so this beats
+            // building one and sorting it, and it runs per decoded video frame.
+            const v = Math.hypot(d[j] - d[q], d[j+1] - d[q+1], d[j+2] - d[q+2]);
+            let m = k++;
+            while (m > 0 && nb[m-1] > v) { nb[m] = nb[m-1]; m--; }
+            nb[m] = v;
+          }
+        }
+        str[i] = k ? nb[k >> 1] : 0;
+        sum += str[i];
+      }
     }
-    for (let i = 0; i < cols * rows; i++) str[i] /= maxD;
+    // Expressed as a z-score against the *bulk* of the frame, not as a
+    // fraction of the maximum, so the bar means the same thing on a sparse
+    // frame and a busy one. Mean absolute deviation rather than standard
+    // deviation, so a handful of extreme cells do not inflate the spread they
+    // are supposed to be standing out from.
+    const mean = sum / n;
+    let mad = 0;
+    for (let i = 0; i < n; i++) mad += Math.abs(str[i] - mean);
+    // Floored, so a perfectly flat frame gives every cell a z of about zero
+    // and stays a flat ground instead of dividing by nothing.
+    mad = Math.max(6, mad / n);
+    for (let i = 0; i < n; i++) str[i] = (str[i] - mean) / mad;
 
     for (let i = 0; i < cols * rows; i++) {
       const r = d[i*4], g2 = d[i*4+1], b = d[i*4+2];
@@ -649,8 +698,16 @@ function drawPoster(dt) {
   const frac = Math.min(0.94, 0.045 + Math.pow(fill, 1.55) * 0.68
                               + A.beat * 0.10 + breath * 0.055);
   const sorted = POSTER.sorted;
-  const cut = frac >= 0.999 ? -1 : sorted[Math.min(sorted.length - 1,
+  const cut = frac >= 0.999 ? -1e9 : sorted[Math.min(sorted.length - 1,
                 Math.floor((1 - frac) * sorted.length))];
+  // A cell has to clear an absolute bar as well as the rank cut. Rank alone
+  // always draws a fixed *fraction*, whatever is in the frame, so a clear sky
+  // with a few kites in it filled up with faintly-different blue squares —
+  // the sky cells were nowhere near distinctive, but they were the next ones
+  // in line. Anything sitting in the bulk of the distribution is background
+  // by definition and stays as flat ground. Loud passages lower the bar to
+  // bring in a second tier of detail, never far enough to admit the bulk.
+  const zFloor = 1.5 - fill * 0.45;
 
   for (let r = 0; r < rows; r++) {
     // Each row is displaced by one frequency band, so the picture shears
@@ -667,10 +724,11 @@ function drawPoster(dt) {
       const src = c < 0 ? 0 : c > cols - 1 ? cols - 1 : c;
       const idx = r * cols + src;
       const st = str[idx];
-      if (st < cut) continue;                 // ground shows through
+      const bar = cut > zFloor ? cut : zFloor;
+      if (st < bar) continue;                 // ground shows through
       // Ease in over the last stretch above the threshold so cells arrive
       // rather than popping.
-      const ease = Math.min(1, (st - cut) / 0.14);
+      const ease = Math.min(1, (st - bar) / 0.55);
       const shift = (A.beat > 0.55 && (r + c) % 3 === 0) ? 1 : 0;
       const pal = ART.palette[(cell[idx] + shift) % ART.palette.length];
       const k = POSTER_IMAGE;
@@ -894,7 +952,7 @@ function frame(now) {
   }
 
   updateDrops(dt);
-  ripplePhase += dt * (0.30 + resp(A.level) * 0.14);
+  ripplePhase += dt * (0.24 + resp(A.level) * 0.10);
 
   // Cyanotype's development. The music is the light source, so where the
   // print sits in the process is a function of the song rather than of
@@ -918,11 +976,19 @@ function frame(now) {
   // left to the pulsing of the highlights, which is a separate thing.
   cyanoDev += (devTarget - cyanoDev) *
               (1 - Math.exp(-dt / (devTarget > cyanoDev ? 2.6 : 7.0)));
-  // Refraction depth gets a slower envelope than the bands themselves. It
-  // scales the entire displacement field, so it has to glide.
-  const swTarget = Math.min(1, resp(A.bass) * 0.85 + A.beat * 0.45);
+  // Depth of water. Deliberately not resp(): measured on ordinary music the
+  // swell sat pinned between 0.80 and 0.97 — saturated, so the water was
+  // always at full depth and every bass transient was a jolt at the top of
+  // the range rather than a swell. That is what read as frantic. Its own
+  // gentler curve gives the depth somewhere to travel.
+  const push = Math.min(1, Math.pow(A.bass * (0.50 + gain() * 0.26), 0.85));
+  const swTarget = Math.min(1, push * 0.80 + A.beat * 0.16);
+  // Slow on both sides, and much slower than the bands themselves. This term
+  // scales the entire displacement field, so when it moves every pixel of the
+  // image moves at once — it has to glide, or it reads as a snap however
+  // smooth the underlying band is.
   rippleSwell += (swTarget - rippleSwell) *
-                 (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.18 : 0.55)));
+                 (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.55 : 1.30)));
   if (LOOKS[look].fx) { drawFX(LOOKS[look]); requestAnimationFrame(frame); return; }
   updateBlobs(dt);
   drawScene(dt);
