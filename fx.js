@@ -17,8 +17,9 @@
 "use strict";
 
 const FX = {
-  canvas: null, gl: null, prog: null, tex: null, u: {}, ok: false,
-  texAspect: 1, sized: [0, 0], mode: 0, cssW: 0, cssH: 0,
+  canvas: null, gl: null, prog: null, tex: null, texB: null, u: {}, ok: false,
+  texAspect: 1, texBAspect: 1, hasTexB: 0, sized: [0, 0],
+  mode: 0, cssW: 0, cssH: 0,
 
   // Blur is a deep defocus: by construction it carries no detail above a few
   // pixels, so it does not need the backing store a look that resamples the
@@ -27,7 +28,7 @@ const FX = {
   // which is closer to the references than the fine grain was.
   MODE_SCALE: { 5: 0.68 },
 
-  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5 },
+  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6 },
 
   init(canvasEl) {
     if (this.ok) return true;
@@ -62,6 +63,10 @@ const FX = {
       uniform vec3  uPal[5];
       uniform vec4  uDrops[4];     // x, y, age(sec), active
       uniform float uHasTex;
+      // Second picture, for the looks that composite two sources.
+      uniform sampler2D uTexB;
+      uniform float uTexBAspect;
+      uniform float uHasTexB;
 
       // ---- helpers -----------------------------------------------------
       vec3 palAt(int i){
@@ -118,6 +123,19 @@ const FX = {
       vec3 tex(vec2 uv){
         if (uHasTex < 0.5) return vec3(0.10, 0.10, 0.13);
         return texture2D(uTex, clamp(uv, 0.001, 0.999)).rgb;
+      }
+
+      // Same pair for the second picture. It gets its own cover-fit because
+      // the two sources rarely share an aspect ratio, and fitting the second
+      // one with the first one's numbers stretches it.
+      vec2 coverUVB(vec2 uv){
+        float ca = uRes.x / max(uRes.y, 1.0);
+        vec2 s = (ca > uTexBAspect) ? vec2(1.0, uTexBAspect / ca)
+                                    : vec2(ca / uTexBAspect, 1.0);
+        return (uv - 0.5) * s + 0.5;
+      }
+      vec3 texB(vec2 uv){
+        return texture2D(uTexB, clamp(uv, 0.001, 0.999)).rgb;
       }
 
       // Variable-radius blur, sampled on a golden-angle spiral.
@@ -525,7 +543,7 @@ const FX = {
         // lifted shadows. Never resolves — the music moves how far out of
         // focus it is, not whether it is.
         // ================================================================
-        else {
+        else if (uMode == 5) {
           // Slow parallax, so a still image is alive before a note plays.
           vec2 par = vec2(sin(uTime * 0.037) * 0.016 + sin(uTime * 0.017) * 0.010,
                           cos(uTime * 0.029) * 0.014 + cos(uTime * 0.013) * 0.009);
@@ -591,6 +609,82 @@ const FX = {
           col *= 1.0 - dot(vc, vc) * 0.15;
         }
 
+        // ================================================================
+        // 6 — PUNCH. A paper collage: one picture with a loose grid of
+        // hand-cut circular holes punched through it, and a second picture
+        // showing through them. The holes are a window onto one continuous
+        // photograph, not a per-circle thumbnail — that is what makes it
+        // read as two sheets of paper rather than as a pattern.
+        // ================================================================
+        else {
+          float aspect = uRes.x / max(uRes.y, 1.0);
+
+          // The two pictures drift against each other. The holes stay where
+          // they are and the picture behind them slides, which is what you
+          // would actually see through a hole, and it means the collage is
+          // alive without the cut edges ever appearing to wander.
+          vec2 par = vec2(sin(uTime * 0.043) * 0.030 + sin(uTime * 0.019) * 0.018,
+                          cos(uTime * 0.034) * 0.024 + cos(uTime * 0.015) * 0.014)
+                   * (0.55 + uLevel * 0.9);
+
+          vec3 base = tex(coverUV(uv));
+          // With one source loaded the holes show the same picture closer in
+          // and offset, which is what the references do anyway — the second
+          // photograph is usually more of the same subject, seen nearer. So
+          // the look works before a second image is chosen and gets better
+          // once it is.
+          vec3 inner = uHasTexB > 0.5
+                     ? texB(coverUVB((uv - 0.5) * 0.88 + 0.5 + par))
+                     : tex(coverUV((uv - 0.5) * 0.46 + 0.5 + vec2(0.06, -0.04) + par));
+
+          // Square-ish grid units, so circles stay circles on any screen.
+          vec2 gp = vec2(uv.x * aspect, uv.y);
+          float cell = aspect / 3.0;            // three across, as in both references
+
+          // Rows are shifted by a per-row amount and circles jittered within
+          // their cell. Nothing in a hand-cut collage sits on a true grid,
+          // and a true grid is instantly readable as machine-made.
+          float row = floor(gp.y / cell);
+          gp.x += (hash(vec2(row, 3.7)) - 0.5) * 0.30 * cell;
+          vec2 id = floor(gp / cell);
+          vec2 c  = (id + 0.5) * cell
+                  + (vec2(hash(id + 1.3), hash(id + 7.1)) - 0.5) * cell * 0.20;
+          vec2 d  = gp - c;
+
+          // Radius wobbles around the circle: scissors do not cut true. The
+          // wobble is indexed by the cell as well as the angle so no two
+          // holes share an outline.
+          float ang = atan(d.y, d.x);
+          float wob = (fbm(vec2(cos(ang), sin(ang)) * 1.15 + id * 11.0) - 0.5) * 0.028;
+          // Only the radius breathes with the music, never the grid: a count
+          // driven through floor() snaps the whole sheet to a new layout every
+          // time a band crosses a threshold, which is the jitter Lens and
+          // Ribbed both had.
+          float grow = 0.90 + uSwell * 0.17 + uBeat * 0.05;
+          float rad = cell * (0.375 + hash(id + 4.4) * 0.055 + wob) * grow;
+
+          float dist = length(d);
+          float aa = cell * 0.008;
+          float inside = 1.0 - smoothstep(rad - aa, rad + aa, dist);
+          col = mix(base, inner, inside);
+
+          // The cut edge. A blade through paper leaves a pale hairline of
+          // exposed stock, and both references have it on every circle — it
+          // is most of what says "cut" rather than "masked".
+          float rim = 1.0 - smoothstep(0.0, cell * 0.009, abs(dist - rad));
+          col += rim * 0.17 * (0.55 + hash(id + 9.2) * 0.7);
+
+          // A soft drop shadow just inside the hole, from the thickness of
+          // the top sheet.
+          float sh = smoothstep(rad, rad - cell * 0.045, dist);
+          col *= 1.0 - (1.0 - sh) * inside * 0.13;
+
+          // Print grain over the whole thing, so the two sheets read as one
+          // photographed object rather than as two layers in a compositor.
+          float gr = hash(floor(vUv * uRes / 1.4));
+          col += (gr - 0.5) * 0.055;
+        }
+
         col = clamp(col, 0.0, 1.0);
         gl_FragColor = vec4(col, 1.0);
       }`;
@@ -624,7 +718,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uDev','uMode','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uDev','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -641,6 +735,16 @@ const FX = {
                   new Uint8Array([26, 26, 33, 255]));
     this.hasTex = 0;
 
+    this.texB = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.texB);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([26, 26, 33, 255]));
+    this.hasTexB = 0;
+
     this.canvas.addEventListener('webglcontextlost', e => {
       e.preventDefault();
       this.ok = false;
@@ -649,6 +753,7 @@ const FX = {
       this.ok = false; this.sized = [0, 0];
       this.init(this.canvas);
       if (this.pendingSource) this.setSource(this.pendingSource, this.pendingW, this.pendingH);
+      if (this.pendingB) this.setSourceB(this.pendingB, this.pendingBW, this.pendingBH);
     }, false);
 
     this.ok = true;
@@ -692,6 +797,21 @@ const FX = {
     } catch (e) { this.hasTex = 0; }
   },
 
+  setSourceB(el, w, h) {
+    // Clearing is handled before the ok check: a layer removed while the
+    // context is lost must stay removed, or it comes back on restore.
+    if (!el) { this.pendingB = null; this.hasTexB = 0; return; }
+    if (!this.ok || !w || !h) return;
+    this.pendingB = el; this.pendingBW = w; this.pendingBH = h;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.texB);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
+      this.texBAspect = w / h;
+      this.hasTexB = 1;
+    } catch (e) { this.hasTexB = 0; }
+  },
+
   render(p) {
     if (!this.ok) return null;
     const gl = this.gl;
@@ -701,7 +821,14 @@ const FX = {
 
     if (p.mode !== this.mode) { this.mode = p.mode; this._applySize(); }
 
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.texB);
+    gl.activeTexture(gl.TEXTURE0);
+
     gl.uniform1i(this.u.uTex, 0);
+    gl.uniform1i(this.u.uTexB, 1);
+    gl.uniform1f(this.u.uTexBAspect, this.texBAspect);
+    gl.uniform1f(this.u.uHasTexB, this.hasTexB);
     gl.uniform2f(this.u.uRes, this.sized[0], this.sized[1]);
     gl.uniform1f(this.u.uTexAspect, this.texAspect);
     gl.uniform1f(this.u.uTime, p.time);

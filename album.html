@@ -140,6 +140,7 @@
 
 <div id="hud">
   <button class="chip" id="art">Artwork…</button>
+  <button class="chip" id="art2">2nd image…</button>
   <button class="chip" id="look">Poster</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
   <button class="chip" id="full">Fullscreen</button>
@@ -317,6 +318,39 @@ function updateSource() {
   return true;
 }
 
+/* Second source layer, for the looks that composite two pictures. Kept
+   deliberately thin: a downscaled canvas and a media handle, nothing else.
+   The palette, the Poster grid and the tone statistics all stay derived from
+   layer one, so adding a second picture cannot change how any existing look
+   behaves. */
+const LAYER2 = { img: null, isVideo: false, dirty: false, rvfc: false };
+const SRC2 = document.createElement('canvas');
+const sg2  = SRC2.getContext('2d');
+
+function updateSource2() {
+  const el = LAYER2.img;
+  const w = srcW(el), h = srcH(el);
+  if (!el || !w || !h) return false;
+  const k  = Math.min(1, SRC_MAX / Math.max(w, h));
+  const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
+  if (SRC2.width !== cw || SRC2.height !== ch) { SRC2.width = cw; SRC2.height = ch; }
+  sg2.drawImage(el, 0, 0, cw, ch);
+  return true;
+}
+
+function applyLayer2(el, isVideo = false) {
+  LAYER2.img = el; LAYER2.isVideo = isVideo;
+  if (updateSource2()) FX.setSourceB(SRC2, SRC2.width, SRC2.height);
+  paintLayer2Chip();
+}
+
+function clearLayer2() {
+  if (LAYER2.img && LAYER2.isVideo) { try { LAYER2.img.pause(); } catch (e) {} }
+  LAYER2.img = null; LAYER2.isVideo = false;
+  FX.setSourceB(null);
+  paintLayer2Chip();
+}
+
 function applyArtwork(img, title = '', artist = '', isVideo = false) {
   ART.img = img;
   updateSource();
@@ -457,6 +491,7 @@ const LOOKS = [
   { name:'Glitch', move:1.40, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter', hidden:true },
   // Shader looks: the artwork is bent rather than painted over.
   { name:'Blur',   fx:'Blur'   },
+  { name:'Punch',  fx:'Punch'  },
   { name:'Ripple', fx:'Ripple' },
   { name:'Ribbed', fx:'Ribbed' },
   { name:'Marble', fx:'Marble', hidden:true },
@@ -936,6 +971,13 @@ function frame(now) {
     // Re-upload the frame only when a shader look is actually on screen.
     if (LOOKS[look].fx) FX.setSource(SRC, SRC.width, SRC.height);
   }
+  // The second layer only ever feeds the shader, so it is refreshed only when
+  // a shader look is on screen — and only the looks that read it will use it.
+  if (LAYER2.isVideo && LAYER2.img && LAYER2.img.readyState >= 2 &&
+      LOOKS[look].fx && (LAYER2.dirty || !LAYER2.rvfc)) {
+    LAYER2.dirty = false;
+    if (updateSource2()) FX.setSourceB(SRC2, SRC2.width, SRC2.height);
+  }
   if (ART.isVideo && ART.img && ART.img.readyState >= 2) {
     videoClock += dt;
     if (videoClock > 0.7) {
@@ -1070,13 +1112,51 @@ if (isIOS || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia)
 
 // --- artwork input: file picker, drag-drop, or a pasted URL -----------
 const fileInput = document.getElementById('file');
-document.getElementById('art').onclick = () => fileInput.click();
-fileInput.onchange = () => { if (fileInput.files[0]) readFile(fileInput.files[0]); };
+// Which slot the next picked file lands in. The picker is shared, so this is
+// set immediately before opening it and read once the file comes back.
+let pickSlot = 1;
+document.getElementById('art').onclick = () => { pickSlot = 1; fileInput.click(); };
+fileInput.onchange = () => {
+  if (fileInput.files[0]) readFile(fileInput.files[0], pickSlot);
+  fileInput.value = '';        // so re-picking the same file still fires
+};
 
-function readFile(file) {
+const art2El = document.getElementById('art2');
+function paintLayer2Chip() {
+  art2El.textContent = LAYER2.img ? '2nd image ✕' : '2nd image…';
+}
+// One control, two states: it loads a second picture, and once there is one
+// the same button removes it. A separate clear button would sit in the HUD
+// doing nothing most of the time.
+art2El.onclick = () => {
+  if (LAYER2.img) return clearLayer2();
+  pickSlot = 2; fileInput.click();
+};
+paintLayer2Chip();
+
+function readFile(file, slot = 1) {
   const name = file.name.replace(/\.[^.]+$/, '');
 
   if (file.type.startsWith('video/')) {
+    if (slot === 2) {
+      const v2 = document.createElement('video');
+      v2.src = URL.createObjectURL(file);
+      v2.muted = true; v2.loop = true; v2.playsInline = true; v2.autoplay = true;
+      v2.onloadeddata = () => {
+        v2.play().catch(() => {});
+        applyLayer2(v2, true);
+        LAYER2.rvfc = typeof v2.requestVideoFrameCallback === 'function';
+        if (LAYER2.rvfc) {
+          const tick2 = () => {
+            LAYER2.dirty = true;
+            if (LAYER2.img === v2) v2.requestVideoFrameCallback(tick2);
+          };
+          v2.requestVideoFrameCallback(tick2);
+        }
+      };
+      v2.onerror = () => flash('Could not play that video. Try an MP4.');
+      return;
+    }
     // Object URLs are same-origin, so frames stay readable for palette
     // extraction. muted + playsInline are what let it autoplay on iOS.
     const v = document.createElement('video');
@@ -1104,8 +1184,11 @@ function readFile(file) {
   // Read to a data URL rather than an object URL: data URLs are same-origin
   // so the canvas stays readable for palette extraction, even from file://.
   fr.onload = async () => {
-    try { applyArtwork(await loadImage(fr.result), name, ''); }
-    catch (e) { flash('Could not read that image.'); }
+    try {
+      const im = await loadImage(fr.result);
+      if (slot === 2) applyLayer2(im, false);
+      else applyArtwork(im, name, '');
+    } catch (e) { flash('Could not read that image.'); }
   };
   fr.readAsDataURL(file);
 }

@@ -27,12 +27,17 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
 becomes the source material. Space cycles the look, `F` toggles fullscreen.
 
-Six looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
+Seven looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
 without deleting any code. Removing that one word brings a look back.
 
-Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Ripple, Ribbed, Marble, Lens
-and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
+Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Ripple, Ribbed, Marble,
+Lens and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
+
+**A second picture** can be loaded with the *2nd image…* chip — image or video, same as the first.
+Only Punch reads it today; the same button removes it. Everything derived from the artwork — the
+palette, the swatches, the Poster grid, the tone statistics — stays derived from layer one, so a
+second picture cannot change how any other look behaves.
 
 - **Drift** — calm ambient colour fields
 - **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
@@ -45,6 +50,11 @@ and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 - **Blur** — the artwork as a photograph taken well out of focus: highlights swollen into soft
   masses, heavy emulsion grain, milky lifted shadows. It never resolves — the music moves how far
   out of focus it is, not whether it is. Replaced Swirl in the picker.
+- **Punch** — a paper collage: one picture with a loose grid of hand-cut circular holes punched
+  through it and a second picture showing through them. **The holes are a window onto one
+  continuous photograph**, not a thumbnail repeated per circle — that is what makes it read as two
+  sheets of paper rather than as a pattern. With only one source loaded the holes show the same
+  picture closer in, which is what the reference collages do anyway.
 - **Glitch** — the image is torn into horizontal slices and the colour channels split on beats
 - **Ripple** — refraction through a moving water surface. A height field is built from summed
   sines plus noise, the image is offset by its gradient, and the colour channels are split
@@ -78,6 +88,36 @@ and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### Two layers, and what a hole is a window onto
+
+The second source is deliberately thin — a bounded canvas and a media handle, refreshed per decoded
+video frame like the first, and *only* while a shader look is on screen. Nothing else in the page
+reads it. Keeping the palette, the swatches, the Poster grid and the tone statistics all derived
+from layer one means adding a second picture cannot change how any existing look behaves, which is
+the difference between a new capability and a regression surface.
+
+The collage itself turns on one decision: **each hole is a window onto one continuous second
+photograph**, positioned in frame space, not a copy of that photograph fitted into each circle. Fit
+it per circle and you get a pattern of identical medallions; let the circles sample one image
+underneath and you get two sheets of paper. Both are a few characters apart in the shader and they
+are not remotely the same look.
+
+Three details do the rest, all from the references rather than from the maths:
+
+- **Nothing sits on a true grid.** Rows are shifted by a per-row amount, circles are jittered inside
+  their cells, and radii vary per circle. A true grid reads as machine-made instantly.
+- **A pale hairline at every cut.** A blade through paper exposes a bright edge of stock. It is most
+  of what says *cut* rather than *masked*, and it wants to be thin — the first pass had it three
+  times too bright and the holes read as glowing portholes.
+- **Barely-there irregularity.** The first pass wobbled the radius by ±12% and the circles came out
+  as potatoes. Hand-cut is still recognisably a circle; ±3% is the whole budget.
+
+The two pictures drift against each other rather than the grid drifting, which is what you would
+actually see through a hole, and it means the collage stays alive without the cut edges ever
+appearing to wander. Only the radius breathes with the music — the grid count is constant, because
+a count driven through `floor()` snaps the whole sheet to a new layout every time a band crosses a
+threshold. That is the same jitter Lens and Ribbed both had.
 
 ### Blur is bokeh, not averaging
 
