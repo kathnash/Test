@@ -26,7 +26,11 @@ const FX = {
   // image sharply does. Two thirds the width is under half the pixels, and
   // the only visible consequence is that the emulsion grain lands coarser —
   // which is closer to the references than the fine grain was.
-  MODE_SCALE: { 5: 0.68 },
+  // Fields is the same shape of problem as Blur: large flat forms whose only
+  // fine detail is grain, so it does not need a look-that-resamples-sharply
+  // backing store either. Punch is deliberately absent — its cut edge is a
+  // hairline and softening that is the one thing that look cannot afford.
+  MODE_SCALE: { 5: 0.68, 8: 0.80 },
 
   MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6, Dots: 7, Fields: 8 },
 
@@ -69,6 +73,7 @@ const FX = {
       // first picture's range clips it flat whenever the two are exposed
       // differently, which is most of the time.
       uniform float uLumLoB, uLumHiB, uMedNormB;
+      uniform float uMorph;    // integrated, not uTime * rate
       uniform sampler2D uTexB;
       uniform float uTexBAspect;
       uniform float uHasTexB;
@@ -264,11 +269,20 @@ const FX = {
             vec2 pc = vec2(ar2 * 0.5 + sin(uTime * 0.037) * ar2 * 0.10,
                            0.5 + cos(uTime * 0.029) * 0.09);
             vec2 pd = vec2(uv.x * ar2, uv.y) - pc;
-            float pa = atan(pd.y, pd.x);
-            float pw = sin(pa * 2.0 + uTime * 0.13) * 0.17
-                     + sin(pa * 3.0 - uTime * 0.09) * 0.10;
-            float prad = (0.030 + uSwell * 0.165) * (1.0 + pw);
-            pud = 1.0 - smoothstep(prad * 0.90, prad, length(pd) + h * 0.020);
+            // Ink dropped in water, not a wobbly disc. The sample position
+            // is warped by noise before its distance is measured — domain
+            // warping, which is what turns a circle into a plume with
+            // fingers, where modulating the radius by angle only ever gives
+            // a lumpy circle. The fingers lengthen away from the centre
+            // because the warp is scaled by distance, the way a drop trails
+            // as it spreads.
+            float prad = 0.030 + uSwell * 0.165;
+            vec2 wq = pd * 5.0 + vec2(uTime * 0.055, uTime * -0.042);
+            float n1 = fbm(wq);
+            float n2 = fbm(wq * 1.7 + 19.0);
+            float reach = clamp(length(pd) / max(prad, 0.001), 0.0, 1.6);
+            vec2 warped = pd + (vec2(n1, n2) - 0.5) * prad * (0.55 + reach * 0.95);
+            pud = 1.0 - smoothstep(prad * 0.86, prad, length(warped) + h * 0.016);
           }
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -433,8 +447,11 @@ const FX = {
 
           float r = length(f);
           float band = mod(cell.x + cell.y, 5.0);
-          float pulse = 0.90 + uBass * 0.24 + uBeat * 0.17
-                      + sin(uTime * 0.5 + (cell.x + cell.y) * 0.7) * 0.03;
+          // A narrow travel on purpose. The grid stays put; only how far each
+          // circle opens within its cell moves, and a wide range made them
+          // collide at the top of it.
+          float pulse = 0.94 + uBass * 0.105 + uBeat * 0.070
+                      + sin(uTime * 0.5 + (cell.x + cell.y) * 0.7) * 0.022;
 
           if (r > pulse){
             col = vec3(0.035, 0.033, 0.045);
@@ -680,8 +697,11 @@ const FX = {
             float ar5 = uRes.x / max(uRes.y, 1.0);
             vec2 q = vec2(uv.x * ar5, uv.y) - vec2(ar5 * 0.5, 0.5)
                    + vec2(sin(uTime * 0.023) * 0.017, cos(uTime * 0.019) * 0.014);
-            q /= vec2(0.300, 0.215) * (1.0 + uSwell * 0.10);
-            ov = 1.0 - smoothstep(0.52, 1.0, length(q));
+            q /= vec2(0.205, 0.300) * (1.0 + uSwell * 0.10);
+            // A defined edge with only a suggestion of feather, so it reads as
+            // a cut aperture rather than as a soft glow bleeding into the
+            // defocus behind it.
+            ov = 1.0 - smoothstep(0.955, 1.0, length(q));
           }
 
           float a0 = hash(floor(vUv * uRes)) * 6.2831853;
@@ -755,42 +775,60 @@ const FX = {
           vec2 gp = vec2(uv.x * aspect, uv.y);
           float cell = aspect / 3.0;            // three across, as in both references
 
-          // Rows are shifted by a per-row amount and circles jittered within
-          // their cell. Nothing in a hand-cut collage sits on a true grid,
-          // and a true grid is instantly readable as machine-made.
-          float row = floor(gp.y / cell);
-          gp.x += (hash(vec2(row, 3.7)) - 0.5) * 0.30 * cell;
-          vec2 id = floor(gp / cell);
-          vec2 c  = (id + 0.5) * cell
-                  + (vec2(hash(id + 1.3), hash(id + 7.1)) - 0.5) * cell * 0.20;
-          vec2 d  = gp - c;
-
-          // Radius wobbles around the circle: scissors do not cut true. The
-          // wobble is indexed by the cell as well as the angle so no two
-          // holes share an outline.
-          float ang = atan(d.y, d.x);
-          float wob = (fbm(vec2(cos(ang), sin(ang)) * 1.15 + id * 11.0) - 0.5) * 0.028;
           // Only the radius breathes with the music, never the grid: a count
           // driven through floor() snaps the whole sheet to a new layout every
           // time a band crosses a threshold, which is the jitter Lens and
           // Ribbed both had.
           float grow = 0.90 + uSwell * 0.17 + uBeat * 0.05;
-          float rad = cell * (0.375 + hash(id + 4.4) * 0.055 + wob) * grow;
 
-          float dist = length(d);
+          // Nearest hole across a 3x3 neighbourhood. Testing only the cell a
+          // pixel falls in clips every circle at the cell wall the moment it
+          // grows past half a cell — which is exactly what a pulse does, so
+          // the holes were being cropped at their widest. The row shift is a
+          // property of each candidate cell rather than of the pixel, so
+          // neighbours in other rows keep their own offset.
+          // The search runs on the plain radius and the hand-cut wobble is
+          // applied once, to whichever circle won. The wobble is under 3% of
+          // the radius, far too little to change which circle is nearest
+          // except in a band thinner than a pixel — so evaluating an fbm for
+          // all nine neighbours bought nothing and cost 9x the noise.
+          vec2 cid = floor(gp / cell);
+          float bestSd = 1e9, bestRad = 0.0;
+          vec2 bestId = cid, bestD = vec2(0.0);
+          for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+              vec2 id = cid + vec2(float(dx), float(dy));
+              // Rows shifted, circles jittered within their cell. Nothing in a
+              // hand-cut collage sits on a true grid, and a true grid is
+              // instantly readable as machine-made.
+              vec2 c = (id + 0.5) * cell
+                     + vec2((hash(vec2(id.y, 3.7)) - 0.5) * 0.30 * cell, 0.0)
+                     + (vec2(hash(id + 1.3), hash(id + 7.1)) - 0.5) * cell * 0.20;
+              vec2 d = gp - c;
+              float rad = cell * (0.375 + hash(id + 4.4) * 0.055) * grow;
+              float sd = length(d) - rad;
+              if (sd < bestSd) { bestSd = sd; bestRad = rad; bestId = id; bestD = d; }
+            }
+          }
+          // Scissors do not cut true. Indexed by cell as well as angle, so no
+          // two holes share an outline.
+          float bang = atan(bestD.y, bestD.x);
+          bestSd -= (fbm(vec2(cos(bang), sin(bang)) * 1.15 + bestId * 11.0) - 0.5)
+                    * 0.028 * cell * grow;
+
           float aa = cell * 0.008;
-          float inside = 1.0 - smoothstep(rad - aa, rad + aa, dist);
+          float inside = 1.0 - smoothstep(-aa, aa, bestSd);
           col = mix(base, inner, inside);
 
           // The cut edge. A blade through paper leaves a pale hairline of
           // exposed stock, and both references have it on every circle — it
           // is most of what says "cut" rather than "masked".
-          float rim = 1.0 - smoothstep(0.0, cell * 0.009, abs(dist - rad));
-          col += rim * 0.17 * (0.55 + hash(id + 9.2) * 0.7);
+          float rim = 1.0 - smoothstep(0.0, cell * 0.009, abs(bestSd));
+          col += rim * 0.17 * (0.55 + hash(bestId + 9.2) * 0.7);
 
           // A soft drop shadow just inside the hole, from the thickness of
           // the top sheet.
-          float sh = smoothstep(rad, rad - cell * 0.045, dist);
+          float sh = smoothstep(0.0, -cell * 0.045, bestSd);
           col *= 1.0 - (1.0 - sh) * inside * 0.13;
 
           // Print grain over the whole thing, so the two sheets read as one
@@ -814,21 +852,28 @@ const FX = {
           vec2 base = floor(gp / cell);
           float aa = cell * 0.020;
 
+          // One cell, not a 3x3 neighbourhood. A dot's centre wanders at most
+          // 0.29 of a cell and its radius tops out at 0.18, so it can never
+          // reach the cell wall — which means the eight neighbours could
+          // never contribute and testing them was nine times the work for
+          // nothing. Keep the jitter and radius under half a cell between
+          // them and this stays exact.
+          //
           // Each dot keeps its own clock, offset by a per-cell seed, so they
           // change one at a time rather than the whole field blinking
           // together — that stagger is the difference between shuffling and
           // strobing. Phase is integrated on the CPU: multiplying uTime by a
           // rate would jump every dot to a new step the instant the music
           // changed.
-          for (int dy = -1; dy <= 1; dy++){
-            for (int dx = -1; dx <= 1; dx++){
-              vec2 id = base + vec2(float(dx), float(dy));
+          {
+            {
+              vec2 id = base;
               float seed = hash(id * 1.7 + 0.5);
               float t = uShuffle + seed * 13.0;
               float stp = floor(t), fr = fract(t);
 
               vec2 j = vec2(hash(id + stp * 1.7), hash(id + stp * 3.1)) - 0.5;
-              vec2 c = (id + 0.5) * cell + j * cell * 0.66;
+              vec2 c = (id + 0.5) * cell + j * cell * 0.58;
 
               // Fade out, move, fade back in. A dot that teleports reads as a
               // glitch; a dot that dissolves and reappears reads as a shuffle.
@@ -839,8 +884,32 @@ const FX = {
               float m = (1.0 - smoothstep(rr - aa, rr + aa, d)) * a;
 
               // Dots are small and most pixels are covered by none of the
-              // nine, so the colour work only runs where it lands. That
-              // matters more now that some dots read a texture.
+              // nine, so the sampling only runs where one lands — which is
+              // what makes the salience test below affordable at all.
+              if (m > 0.002) {
+                // Shape detection. Local contrast, not distance from a global
+                // colour: a clear sky is a gradient, so its top and bottom are
+                // genuinely far from any single colour and a global measure
+                // scattered dots evenly across it. What marks a subject is
+                // differing from its surroundings, so this compares the patch
+                // under the dot with four patches a cell away.
+                //
+                // A dot that lands on background is dropped outright rather
+                // than dimmed — a translucent dot reads as a mistake, an
+                // absent one reads as the field having moved on. So each
+                // reshuffle leaves the survivors collected on the shapes, and
+                // they migrate as the shapes do.
+                vec2 dotUv = vec2(c.x / aspect, c.y);
+                vec3 under = tex(coverUV(dotUv));
+                float step1 = cell / aspect;
+                float con = 0.0;
+                con = max(con, length(under - tex(coverUV(dotUv + vec2( step1, 0.0)))));
+                con = max(con, length(under - tex(coverUV(dotUv + vec2(-step1, 0.0)))));
+                con = max(con, length(under - tex(coverUV(dotUv + vec2(0.0,  cell)))));
+                con = max(con, length(under - tex(coverUV(dotUv + vec2(0.0, -cell)))));
+                float keep = 0.12 + 0.88 * smoothstep(0.085, 0.30, con);
+                if (hash(id + stp * 7.7) > keep) m = 0.0;
+              }
               if (m > 0.002) {
                 float hs = hash(id + stp * 5.3);
                 float v  = hash(id + stp * 8.9);
@@ -880,7 +949,7 @@ const FX = {
           vec2 base = floor(gp / cell);
 
           vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
-                   * (0.6 + uLevel * 0.8);
+                   * (0.6 + uLevel * 1.4);
 
           // Nearest blob wins, so overlapping shapes resolve to one surface
           // instead of blending into each other. Evaluated over a 3x3
@@ -896,8 +965,8 @@ const FX = {
               vec2 c = (id + 0.5) * cell
                      + (vec2(hash(id + 0.7), hash(id + 4.9)) - 0.5) * cell * vec2(0.55, 0.45);
               // Bands drift sideways at their own pace.
-              c.x += sin(uTime * (0.021 + hash(id + 8.1) * 0.018) + hash(id) * 6.3)
-                   * cell.x * 0.13;
+              c.x += sin(uMorph * (0.38 + hash(id + 8.1) * 0.32) + hash(id) * 6.3)
+                   * cell.x * 0.15;
 
               vec2 d = gp - c;
               // Flattened, because these are lying-down shapes.
@@ -911,12 +980,20 @@ const FX = {
               // nine times per pixel.
               float s1 = hash(id + 1.1) * 6.28, s2 = hash(id + 2.3) * 6.28,
                     s3 = hash(id + 3.5) * 6.28;
-              float w = sin(ang * 2.0 + s1 + uTime * 0.055) * 0.17
-                      + sin(ang * 3.0 - s2 - uTime * 0.039) * 0.11
-                      + sin(ang * 5.0 + s3 + uTime * 0.028) * 0.055;
+              // Morph runs on an integrated phase, so the music can speed the
+              // outlines up without displacing them — multiplying uTime by a
+              // rate would jump every shape to a different silhouette the
+              // instant the rate changed.
+              float w = sin(ang * 2.0 + s1 + uMorph * 1.00) * 0.17
+                      + sin(ang * 3.0 - s2 - uMorph * 0.71) * 0.11
+                      + sin(ang * 5.0 + s3 + uMorph * 0.51) * 0.055;
 
+              // Each shape answers the beat on its own offset, so the sheet
+              // breathes in loose sequence rather than as one object. Driven
+              // by the slow envelope, so it swells rather than snapping.
+              float own = 0.5 + 0.5 * sin(uMorph * 0.8 + hash(id + 3.3) * 6.28);
               float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
-                        * (0.95 + uSwell * 0.13);
+                        * (0.86 + uSwell * (0.20 + own * 0.22) + uBeat * own * 0.075);
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
             }
@@ -975,7 +1052,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -1096,6 +1173,7 @@ const FX = {
     gl.uniform1f(this.u.uMedNorm, p.medianNorm);
     gl.uniform1f(this.u.uDev, p.dev);
     gl.uniform1f(this.u.uShuffle, p.shuffle);
+    gl.uniform1f(this.u.uMorph, p.morph);
     gl.uniform1f(this.u.uLumLoB, p.lumLoB);
     gl.uniform1f(this.u.uLumHiB, p.lumHiB);
     gl.uniform1f(this.u.uMedNormB, p.medianNormB);

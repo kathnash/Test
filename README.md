@@ -41,11 +41,11 @@ it: with one picture loaded they all work exactly as before.
 | look | with a second picture |
 |---|---|
 | Poster | a wandering *cluster* of layer-two cells that bursts open on a transient |
-| Blur | a feathered oval of layer two floating centre-frame, defocused by the same kernel |
+| Blur | an upright oval of layer two floating centre-frame, defocused by the same kernel |
 | Punch | layer two shows through the cut holes |
 | Dots | some of the dots are lifted straight out of layer two |
 | Fields | some of the cutouts are layer two |
-| Ripple | a *puddle* of layer two, spreading on the swell, its edge rippled by the water |
+| Ripple | ink dropped in water — a plume of layer two with fingers, spreading on the swell |
 | Ribbed | the two ride a conveyor behind the glass, one panel per screen width, running left |
 | Lens | some circles hold layer two, scattered by a per-circle hash |
 | Cyanotype | a square inset of layer two, printed through the same burn and wash |
@@ -109,6 +109,48 @@ it: with one picture loaded they all work exactly as before.
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### Three ways a grid loop can be wrong
+
+Punch, Dots and Fields all step over a cell grid, and each one wanted a different neighbourhood.
+Getting it wrong costs correctness in one direction and 9× the work in the other.
+
+**Punch was clipping its own holes.** It tested only the cell a pixel fell in, so a circle that grew
+past half a cell was cut off at the cell wall — and growing past half a cell is exactly what a pulse
+does, so the holes were being cropped at their widest. This is the Marble bug again, and the fix is
+the same: search a 3×3 neighbourhood and keep the nearest surface.
+
+That fix then cost 9× the noise, because the hand-cut wobble was being evaluated for all nine
+neighbours. **The wobble is under 3% of the radius** — far too small to change which circle is
+nearest except in a band thinner than a pixel. So the search runs on the plain radius and the wobble
+is applied once, to whichever circle won: 134ms → 99ms, same picture.
+
+**Dots never needed a neighbourhood at all.** A dot's centre wanders at most 0.29 of a cell and its
+radius tops out at 0.18, so it cannot reach the cell wall — the eight neighbours could never
+contribute anything. Dropping to a single cell took it 131ms → 88ms *while adding* four texture
+samples per dot for shape detection. Worth checking the arithmetic before reaching for the loop:
+keep jitter plus radius under half a cell and one cell is exact.
+
+### Dots find shapes by local contrast
+
+"Distance from the artwork's dominant colour" was the obvious salience measure and it failed for the
+same reason it failed in Poster: **a clear sky is a gradient**, so its top and bottom are genuinely
+far from any single colour, and dots scattered evenly across it. Local contrast — the patch under
+the dot against four patches a cell away — separates a kite from the sky it hangs in, because what
+marks a subject is differing from its *surroundings*.
+
+A dot that lands on background is dropped outright rather than dimmed. A translucent dot reads as a
+mistake; an absent one reads as the field having moved on. So each reshuffle leaves the survivors
+collected on the shapes, and they migrate as the shapes do.
+
+### Cost follows the highest frequency a look can produce
+
+Fields joined Blur on a reduced backing store — large flat forms whose only fine detail is grain, so
+it does not need the resolution a look that resamples sharply does. At 0.80 width it went
+**128ms → 82ms**, from the most expensive look to mid-range, with no visible change.
+
+Punch is deliberately *not* on the list. Its cut edge is a pale hairline, and softening that is the
+one thing that look cannot afford.
 
 ### Two pictures for free
 

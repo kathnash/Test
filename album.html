@@ -836,7 +836,7 @@ function drawFX(cfg) {
   FX.render({
     time, phase: ripplePhase, swell: rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
-    dev: cyanoDev, shuffle: shufflePhase,
+    dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lumLoB: LAYER2.lumLo, lumHiB: LAYER2.lumHi, medianNormB: LAYER2.medianNorm,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
@@ -987,6 +987,9 @@ let shufflePhase = 0;
 // Radius of Poster's layer-two cluster, in cells. Fast to open, slow to
 // close, so a hit reads as a burst that fades rather than a level meter.
 let clusterR = 0, layer2Clock = 0;
+// Fields' outline morph. Integrated so the music can drive the rate without
+// jumping every shape to a different silhouette.
+let morphPhase = 0;
 // How far the cyanotype has developed, 0..1. A state the music moves, not a
 // position on a clock: sound is light, so it exposes toward a finished blue
 // print and slides back toward the raw violet sheet in the quiet.
@@ -1061,7 +1064,11 @@ function frame(now) {
   ripplePhase += dt * (0.24 + resp(A.level) * 0.10);
   // Roughly a dot every 4s at rest, several a second when it is loud. Each
   // dot is offset within this by its own seed, so they take turns.
-  shufflePhase += dt * (0.26 + resp(A.level) * 0.55 + A.beat * 0.75);
+  // Weighted hard toward the music: at rest the field is close to still, and
+  // a transient moves several dots at once. A large constant term here is
+  // what made it read as animation running regardless of the sound.
+  shufflePhase += dt * (0.06 + resp(A.level) * 0.70 + A.beat * 2.10);
+  morphPhase += dt * (0.16 + resp(A.level) * 0.85 + A.beat * 1.10);
   const clTarget = Math.max(0, A.beat * 7.0 + resp(A.level) * 2.4 - 1.6);
   clusterR += (clTarget - clusterR) *
               (1 - Math.exp(-dt / (clTarget > clusterR ? 0.10 : 0.70)));
