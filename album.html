@@ -323,7 +323,8 @@ function updateSource() {
    The palette, the Poster grid and the tone statistics all stay derived from
    layer one, so adding a second picture cannot change how any existing look
    behaves. */
-const LAYER2 = { img: null, isVideo: false, dirty: false, rvfc: false };
+const LAYER2 = { img: null, isVideo: false, dirty: false, rvfc: false,
+                lumLo: 0, lumHi: 1, medianNorm: 0.5 };
 const SRC2 = document.createElement('canvas');
 const sg2  = SRC2.getContext('2d');
 
@@ -338,9 +339,20 @@ function updateSource2() {
   return true;
 }
 
+// The second picture's own tone range, so looks that threshold it can do so
+// against its own exposure rather than the first picture's.
+function readStats2() {
+  if (!SRC2.width) return;
+  try {
+    const { lumLo, lumHi, medianNorm } = extractPalette(SRC2);
+    LAYER2.lumLo = lumLo; LAYER2.lumHi = lumHi; LAYER2.medianNorm = medianNorm;
+  } catch (e) {}
+}
+
 function applyLayer2(el, isVideo = false) {
   LAYER2.img = el; LAYER2.isVideo = isVideo;
-  if (updateSource2()) FX.setSourceB(SRC2, SRC2.width, SRC2.height);
+  if (updateSource2()) { FX.setSourceB(SRC2, SRC2.width, SRC2.height); readStats2(); }
+  buildPoster();          // Poster samples the second picture on its own lattice
   paintLayer2Chip();
 }
 
@@ -348,6 +360,7 @@ function clearLayer2() {
   if (LAYER2.img && LAYER2.isVideo) { try { LAYER2.img.pause(); } catch (e) {} }
   LAYER2.img = null; LAYER2.isVideo = false;
   FX.setSourceB(null);
+  buildPoster();
   paintLayer2Chip();
 }
 
@@ -614,7 +627,7 @@ function channel(colour) {
    at a coarse grid, each cell snapped to its nearest extracted colour, and
    drawn as flat rectangles with no smoothing — so it stays unmistakably the
    album while reading as hard-edged colour blocks rather than a blur. */
-const POSTER = { cols: 0, rows: 0, cell: null, rgb: null, str: null, sorted: null };
+const POSTER = { cols: 0, rows: 0, cell: null, rgb: null, rgb2: null, str: null, sorted: null };
 // 0 = pure palette, 1 = the picture untouched. Partway keeps the flat
 // poster feel while letting the image read.
 const POSTER_IMAGE = 0.74;
@@ -705,6 +718,22 @@ function buildPoster() {
       }
       cell[i] = best;
     }
+    // The same lattice sampled from layer two, so a cell can be painted in
+    // either picture's colour without needing a second grid or a second
+    // selection pass. Selection stays driven by layer one throughout.
+    let rgb2 = null;
+    if (LAYER2.img && SRC2.width) {
+      rgb2 = new Uint8Array(n * 3);
+      const s2 = Math.max(cols / SRC2.width, rows / SRC2.height);
+      const dw2 = SRC2.width * s2, dh2 = SRC2.height * s2;
+      x.clearRect(0, 0, cols, rows);
+      x.drawImage(SRC2, (cols - dw2) / 2, (rows - dh2) / 2, dw2, dh2);
+      const d2 = x.getImageData(0, 0, cols, rows).data;
+      for (let i = 0; i < n; i++) {
+        rgb2[i*3] = d2[i*4]; rgb2[i*3+1] = d2[i*4+1]; rgb2[i*3+2] = d2[i*4+2];
+      }
+    }
+    POSTER.rgb2 = rgb2;
     POSTER.cols = cols; POSTER.rows = rows; POSTER.cell = cell; POSTER.rgb = rgb; POSTER.str = str;
     // Sorted copy so the threshold can be chosen by rank. Thresholding on
     // the value itself gives wildly different coverage per image — a
@@ -747,6 +776,14 @@ function drawPoster(dt) {
   // bring in a second tier of detail, never far enough to admit the bulk.
   const zFloor = 1.5 - fill * 0.45;
 
+  // Layer two arrives as a cluster, not a scatter: a patch of cells that
+  // wanders the frame and opens up on a strong transient. Its radius has its
+  // own fast-attack, slow-release envelope so it bursts on the hit and
+  // lingers, rather than tracking the level up and down.
+  const cl = POSTER.rgb2 ? clusterR : 0;
+  const clx = (0.5 + Math.sin(time * 0.081) * 0.34) * cols;
+  const cly = (0.5 + Math.cos(time * 0.063) * 0.36) * rows;
+
   for (let r = 0; r < rows; r++) {
     // Each row is displaced by one frequency band, so the picture shears
     // apart along the music instead of every block moving together.
@@ -762,7 +799,12 @@ function drawPoster(dt) {
       const src = c < 0 ? 0 : c > cols - 1 ? cols - 1 : c;
       const idx = r * cols + src;
       const st = str[idx];
-      const bar = cut > zFloor ? cut : zFloor;
+      // Inside the cluster the bar drops, so layer two does not merely
+      // recolour the cells that were already showing — it brings its own
+      // cells with it, which is what makes it read as a burst.
+      const cd = cl > 0 ? Math.hypot(src - clx, r - cly) / cl : 9;
+      const inCl = cd < 1 ? 1 - cd * cd : 0;
+      const bar = (cut > zFloor ? cut : zFloor) - inCl * 1.35;
       if (st < bar) continue;                 // ground shows through
       // Ease in over the last stretch above the threshold so cells arrive
       // rather than popping.
@@ -770,9 +812,10 @@ function drawPoster(dt) {
       const shift = (A.beat > 0.55 && (r + c) % 3 === 0) ? 1 : 0;
       const pal = ART.palette[(cell[idx] + shift) % ART.palette.length];
       const k = POSTER_IMAGE;
-      const pr = pal[0] + (POSTER.rgb[idx*3]     - pal[0]) * k;
-      const pg = pal[1] + (POSTER.rgb[idx*3 + 1] - pal[1]) * k;
-      const pb = pal[2] + (POSTER.rgb[idx*3 + 2] - pal[2]) * k;
+      const rgbS = inCl > 0.18 && POSTER.rgb2 ? POSTER.rgb2 : POSTER.rgb;
+      const pr = pal[0] + (rgbS[idx*3]     - pal[0]) * k;
+      const pg = pal[1] + (rgbS[idx*3 + 1] - pal[1]) * k;
+      const pb = pal[2] + (rgbS[idx*3 + 2] - pal[2]) * k;
       // Blocks grow toward their neighbours on transients and open up gaps
       // of the ground colour when the music is quiet.
       const grow = (0.50 + ease * 0.55) *
@@ -794,6 +837,7 @@ function drawFX(cfg) {
     time, phase: ripplePhase, swell: rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase,
+    lumLoB: LAYER2.lumLo, lumHiB: LAYER2.lumHi, medianNormB: LAYER2.medianNorm,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
     level: resp(A.level), beat: A.beat,
@@ -940,6 +984,9 @@ let ripplePhase = 0, rippleSwell = 0;
 // Dots' shuffle position. Integrated for the same reason the ripple phase is:
 // uTime * rate jumps every dot to a new step the instant the rate changes.
 let shufflePhase = 0;
+// Radius of Poster's layer-two cluster, in cells. Fast to open, slow to
+// close, so a hit reads as a burst that fades rather than a level meter.
+let clusterR = 0, layer2Clock = 0;
 // How far the cyanotype has developed, 0..1. A state the music moves, not a
 // position on a clock: sound is light, so it exposes toward a finished blue
 // print and slides back toward the raw violet sheet in the quiet.
@@ -983,6 +1030,17 @@ function frame(now) {
     LAYER2.dirty = false;
     if (updateSource2()) FX.setSourceB(SRC2, SRC2.width, SRC2.height);
   }
+  // Poster's copy of the second picture costs a readback, so it refreshes a
+  // couple of times a second rather than per frame — the same trade the
+  // palette makes for layer one.
+  if (LAYER2.isVideo && LAYER2.img && LAYER2.img.readyState >= 2) {
+    layer2Clock += dt;
+    if (layer2Clock > 0.45) {
+      layer2Clock = 0;
+      readStats2();
+      if (is('Poster')) { updateSource2(); buildPoster(); }
+    }
+  }
   if (ART.isVideo && ART.img && ART.img.readyState >= 2) {
     videoClock += dt;
     if (videoClock > 0.7) {
@@ -1004,6 +1062,9 @@ function frame(now) {
   // Roughly a dot every 4s at rest, several a second when it is loud. Each
   // dot is offset within this by its own seed, so they take turns.
   shufflePhase += dt * (0.26 + resp(A.level) * 0.55 + A.beat * 0.75);
+  const clTarget = Math.max(0, A.beat * 7.0 + resp(A.level) * 2.4 - 1.6);
+  clusterR += (clTarget - clusterR) *
+              (1 - Math.exp(-dt / (clTarget > clusterR ? 0.10 : 0.70)));
 
   // Cyanotype's development. The music is the light source, so where the
   // print sits in the process is a function of the song rather than of

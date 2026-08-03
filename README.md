@@ -34,10 +34,21 @@ without deleting any code. Removing that one word brings a look back.
 Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields, Ripple,
 Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
 
-**A second picture** can be loaded with the *2nd image…* chip — image or video, same as the first.
-Only Punch reads it today; the same button removes it. Everything derived from the artwork — the
-palette, the swatches, the Poster grid, the tone statistics — stays derived from layer one, so a
-second picture cannot change how any other look behaves.
+**A second picture** can be loaded with the *2nd image…* chip — image or video, same as the first;
+the same button removes it. **Every live look has a two-image behaviour**, and none of them require
+it: with one picture loaded they all work exactly as before.
+
+| look | with a second picture |
+|---|---|
+| Poster | a wandering *cluster* of layer-two cells that bursts open on a transient |
+| Blur | a feathered oval of layer two floating centre-frame, defocused by the same kernel |
+| Punch | layer two shows through the cut holes |
+| Dots | some of the dots are lifted straight out of layer two |
+| Fields | some of the cutouts are layer two |
+| Ripple | a *puddle* of layer two, spreading on the swell, its edge rippled by the water |
+| Ribbed | the two ride a conveyor behind the glass, one panel per screen width, running left |
+| Lens | some circles hold layer two, scattered by a per-circle hash |
+| Cyanotype | a square inset of layer two, printed through the same burn and wash |
 
 - **Drift** — calm ambient colour fields
 - **Poster** — a flat ground of the artwork's dominant colour, over which cells appear as hard-edged
@@ -98,6 +109,34 @@ second picture cannot change how any other look behaves.
   it, so the print sinks back toward violet in the gaps and develops again when the song returns.
   Exposure and edge softness follow the music on top of that, so the pale shapes bloom and their
   edges travel between crisp and dissolved. In the quiet, dappled light moves across the sheet.
+
+### Two pictures for free
+
+Compositing a second source could easily have doubled every look's texture bandwidth. It costs
+nothing measurable — a same-process A/B across every look, one picture then two, came back between
+**−5% and +4%**, which is inside the noise on this rasteriser:
+
+| | Blur | Punch | Dots | Fields | Ripple | Ribbed | Lens | Cyanotype |
+|---|---|---|---|---|---|---|---|---|
+| 1 image | 64.3 | 89.6 | 112.6 | 115.2 | 97.7 | 105.5 | 90.0 | 89.8 |
+| 2 images | 63.2 | 85.7 | 111.4 | 113.3 | 98.9 | 102.3 | 85.1 | 93.2 |
+
+The reason is that `pick()` is a **branch, not a mix**. Written as
+`mix(tex(a), texB(b), m)` every pixel samples both textures always. Written as a branch on `m`, a
+pixel well inside either region samples one, and only the feathered boundary — a few percent of the
+frame — pays for both. Same for Ribbed's conveyor, where the panel a point falls in selects the
+picture, so the sixteen blur taps still cost sixteen fetches rather than thirty-two.
+
+**Each picture needs its own cover-fit and its own tone statistics.** The cover-fit is obvious once
+the two sources have different aspect ratios. The tone statistics are less so, and Cyanotype's inset
+came out blank white until they were added: that look stretches luminance to the source's 8th/92nd
+percentiles before thresholding, and a second image exposed differently from the first sits entirely
+outside that range, so every pixel of it lands on one side of the threshold. Layer two now carries
+its own `lumLo`/`lumHi`/`median`, blended in by the inset mask, and the inset is printed through the
+same burn and wash as the rest of the sheet rather than composited on top of it.
+
+Selection still comes from layer one everywhere — Poster's local-contrast ranking, the palette, the
+swatches. A second picture changes what is *painted*, never what is *chosen*.
 
 ### What actually limits how many looks there can be
 

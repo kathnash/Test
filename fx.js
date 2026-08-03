@@ -65,6 +65,10 @@ const FX = {
       uniform float uHasTex;
       // Second picture, for the looks that composite two sources.
       uniform float uShuffle;  // integrated, not uTime * rate
+      // The second picture's own tone statistics. Thresholding it against the
+      // first picture's range clips it flat whenever the two are exposed
+      // differently, which is most of the time.
+      uniform float uLumLoB, uLumHiB, uMedNormB;
       uniform sampler2D uTexB;
       uniform float uTexBAspect;
       uniform float uHasTexB;
@@ -146,6 +150,26 @@ const FX = {
         return texture2D(uTexB, clamp(uv, 0.001, 0.999)).rgb;
       }
 
+      // Choose between the two pictures. Written as a branch rather than an
+      // unconditional mix so a pixel well inside either region costs one
+      // texture fetch, not two — only the feathered boundary pays for both.
+      // Each picture gets its own cover-fit, so a portrait and a landscape
+      // source both sit correctly.
+      vec3 pick(vec2 uv, float m){
+        if (m <= 0.002) return tex(coverUV(uv));
+        if (m >= 0.998) return texB(coverUVB(uv));
+        return mix(tex(coverUV(uv)), texB(coverUVB(uv)), m);
+      }
+
+      // Conveyor sampler: the two pictures sit side by side on an endless
+      // belt, one panel per screen width. Which panel a point falls in picks
+      // the picture, so one fetch covers it.
+      vec3 beltTex(vec2 p){
+        vec2 q = vec2(fract(p.x), p.y);
+        if (mod(floor(p.x), 2.0) < 0.5) return tex(coverUV(q));
+        return texB(coverUVB(q));
+      }
+
       // Variable-radius blur, sampled on a golden-angle spiral.
       //
       // This used to be eight taps on two axis-aligned rings, which is not a
@@ -171,6 +195,25 @@ const FX = {
           float a  = fi * 2.39996323 + a0;      // golden angle
           float w  = 1.0 - rr * 0.55;
           c += tex(uv + vec2(cos(a), sin(a)) * rr * r) * w;
+          wsum += w;
+        }
+        return c / wsum;
+      }
+
+      // Same spiral as softTex, reading the belt. Duplicated rather than
+      // parameterised because GLSL ES 1.0 has no function pointers, and the
+      // branch not taken costs nothing at runtime.
+      vec3 softBelt(vec2 p, float r){
+        if (r < 0.0008) return beltTex(p);
+        float a0 = hash(floor(vUv * uRes)) * 6.2831853;
+        vec3 c = vec3(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < 16; i++){
+          float fi = float(i) + 0.5;
+          float rr = sqrt(fi / 16.0);
+          float a  = fi * 2.39996323 + a0;
+          float w  = 1.0 - rr * 0.55;
+          c += beltTex(p + vec2(cos(a), sin(a)) * rr * r) * w;
           wsum += w;
         }
         return c / wsum;
@@ -210,11 +253,29 @@ const FX = {
           float amt = 0.0105 + uSwell * 0.0165;
           vec2 off = grad * amt;
 
+          // A puddle of the second picture, spreading with the music. Its
+          // radius rides the same slow envelope the water depth does, so it
+          // swells rather than flickering with the band, and its edge is
+          // displaced by the surface height — so it reads as something lying
+          // in the water rather than a shape laid over it.
+          float pud = 0.0;
+          if (uHasTexB > 0.5) {
+            float ar2 = uRes.x / max(uRes.y, 1.0);
+            vec2 pc = vec2(ar2 * 0.5 + sin(uTime * 0.037) * ar2 * 0.10,
+                           0.5 + cos(uTime * 0.029) * 0.09);
+            vec2 pd = vec2(uv.x * ar2, uv.y) - pc;
+            float pa = atan(pd.y, pd.x);
+            float pw = sin(pa * 2.0 + uTime * 0.13) * 0.17
+                     + sin(pa * 3.0 - uTime * 0.09) * 0.10;
+            float prad = (0.030 + uSwell * 0.165) * (1.0 + pw);
+            pud = 1.0 - smoothstep(prad * 0.90, prad, length(pd) + h * 0.020);
+          }
+
           // Chromatic dispersion keeps it reading as refraction, not blur.
           float disp = 1.0 + uHigh * 0.30;
-          col.r = tex(coverUV(uv + off * (1.0 + 0.07 * disp))).r;
-          col.g = tex(coverUV(uv + off)).g;
-          col.b = tex(coverUV(uv + off * (1.0 - 0.07 * disp))).b;
+          col.r = pick(uv + off * (1.0 + 0.07 * disp), pud).r;
+          col.g = pick(uv + off, pud).g;
+          col.b = pick(uv + off * (1.0 - 0.07 * disp), pud).b;
 
           // Caustic glint along the crests. h must be clamped before the
           // power: unnormalised it exceeded 1 and blew whole regions white.
@@ -270,7 +331,16 @@ const FX = {
           clarity = smoothstep(0.40, 0.60, clarity);
           float blur = (1.0 - clarity) * (0.034 + uLevel * 0.022);
 
-          col = softTex(suv, blur);
+          // With a second picture loaded the pane looks onto a conveyor:
+          // the two pictures ride side by side, one screen-width per panel,
+          // running steadily left and cycling forever. The rate is constant,
+          // so multiplying time by it is safe — the displacement problem
+          // only arises when a rate changes.
+          if (uHasTexB > 0.5) {
+            col = softBelt(vec2(sx + wob + par.x + uTime * 0.045, uv.y + par.y), blur);
+          } else {
+            col = softTex(suv, blur);
+          }
 
           // Edge shading on each flute gives the glass thickness. Kept light:
           // the relief is the least interesting thing here, and at full
@@ -387,7 +457,9 @@ const FX = {
             centre.x /= ar;
             vec2 suv = centre + warped * (0.5 / grid) * vec2(1.0 / ar, 1.0)
                               * (1.15 + uBass * 0.18);
-            col = tex(coverUV(suv));
+            // Some circles hold the second picture, chosen per circle by a
+            // hash so the two scatter through the grid rather than banding.
+            col = pick(suv, uHasTexB > 0.5 ? step(hash(cell + 3.3), 0.42) : 0.0);
 
             // The artwork's own colours, lifted slightly rather than remapped
             // through a duotone — the duotone read as a filter over the image
@@ -436,9 +508,29 @@ const FX = {
 
           vec2 drift = vec2(sin(uTime * 0.041) * 0.6 + sin(uTime * 0.017) * 0.4,
                             cos(uTime * 0.033) * 0.6 + cos(uTime * 0.013) * 0.4) * 0.030;
-          vec3 src = tex(coverUV(uv + drift));
+          // A square inset of the second picture. It is fed in before the
+          // exposure rather than composited after, so it goes through the
+          // same burn, wash and deepening as everything else — printed on
+          // the same sheet rather than pasted onto it.
+          float ins = 0.0;
+          if (uHasTexB > 0.5) {
+            float ar3 = uRes.x / max(uRes.y, 1.0);
+            vec2 q = vec2(uv.x * ar3, uv.y) - vec2(ar3 * 0.5, 0.5)
+                   + vec2(sin(uTime * 0.021) * 0.013, cos(uTime * 0.017) * 0.011);
+            float halfW = 0.150 + uSwell * 0.030;
+            ins = 1.0 - smoothstep(halfW - 0.005, halfW + 0.005,
+                                   max(abs(q.x), abs(q.y)));
+          }
+          vec3 src = pick(uv + drift, ins);
           float lum = dot(src, vec3(0.299, 0.587, 0.114));
-          lum = clamp((lum - uLumLo) / max(0.04, uLumHi - uLumLo), 0.0, 1.0);
+          // Stretched against whichever picture this pixel came from. The
+          // inset was coming out blank white until this: a second image with
+          // a different exposure sits entirely outside the first one's
+          // percentile range, so every pixel of it lands on one side of the
+          // threshold.
+          float loB = mix(uLumLo, uLumLoB, ins);
+          float hiB = mix(uLumHi, uLumHiB, ins);
+          lum = clamp((lum - loB) / max(0.04, hiB - loB), 0.0, 1.0);
 
           vec2 cp = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0) * 2.2;
           float coat = fbm(cp + vec2(uTime * 0.020, uTime * -0.014) + 4.0);
@@ -469,7 +561,8 @@ const FX = {
           // moves the exposure threshold as well as tinting the result. That
           // is what makes it read as light on the sheet rather than a texture
           // laid over the picture.
-          float pol = uMedNorm > 0.5 ? 1.0 : -1.0;
+          float medB = mix(uMedNorm, uMedNormB, ins);
+          float pol = medB > 0.5 ? 1.0 : -1.0;
 
           // Developer spreading from each transient.
           float dev = 0.0;
@@ -487,7 +580,7 @@ const FX = {
 
           float breath = sin(uTime * 0.085) * 0.022 + sin(uTime * 0.034) * 0.014;
           float bloom = uSwell * 0.13 + uBeat * 0.05 + breath + dev * 0.09;
-          float expoT = uMedNorm + pol * (bloom - soft - 0.06);
+          float expoT = medB + pol * (bloom - soft - 0.06);
 
           // Where the light falls, the sheet exposes a little further. Small:
           // this is a shadow moving over a print, not a second image.
@@ -578,6 +671,19 @@ const FX = {
           // reproduces that: bright shapes swell and hold their intensity,
           // dark ones recede. A flat mean gives mush, and mush is what
           // separates a blur filter from a photograph.
+          // A feathered oval of the second picture floating in the middle,
+          // defocused by the same kernel as everything else. The feather is
+          // wide on purpose: this is a hole in an out-of-focus photograph, so
+          // a crisp boundary would be the only sharp edge in the frame.
+          float ov = 0.0;
+          if (uHasTexB > 0.5) {
+            float ar5 = uRes.x / max(uRes.y, 1.0);
+            vec2 q = vec2(uv.x * ar5, uv.y) - vec2(ar5 * 0.5, 0.5)
+                   + vec2(sin(uTime * 0.023) * 0.017, cos(uTime * 0.019) * 0.014);
+            q /= vec2(0.300, 0.215) * (1.0 + uSwell * 0.10);
+            ov = 1.0 - smoothstep(0.52, 1.0, length(q));
+          }
+
           float a0 = hash(floor(vUv * uRes)) * 6.2831853;
           float pw = 2.6 + uLevel * 1.5;      // louder blooms harder
           vec3 acc = vec3(0.0);
@@ -587,7 +693,7 @@ const FX = {
             float rr = sqrt(fi / 18.0);
             float a  = fi * 2.39996323 + a0;
             vec2 o = (dirA * (cos(a) * ecc) + dirB * (sin(a) / ecc)) * rr * r;
-            vec3 sm = tex(coverUV(uv + o + par));
+            vec3 sm = pick(uv + o + par, ov);
             float lm = dot(sm, vec3(0.299, 0.587, 0.114));
             float w = (0.16 + pow(lm, pw) * 2.6) * (1.0 - rr * 0.35);
             acc += sm * w;
@@ -728,16 +834,27 @@ const FX = {
               // glitch; a dot that dissolves and reappears reads as a shuffle.
               float a = smoothstep(0.0, 0.16, fr) * (1.0 - smoothstep(0.84, 1.0, fr));
 
-              float hs = hash(id + stp * 5.3);
-              float v  = hash(id + stp * 8.9);
-              vec3 dc = hue2rgb(hs);
-              dc = mix(dc, vec3(1.0), 0.10 + v * 0.22);          // not all full chroma
-              dc = mix(dc, vec3(0.055), step(v, 0.11));           // a few near-black
-              dc = mix(dc, vec3(0.95), step(0.11, v) * step(v, 0.20));
-
               float rr = cell * (0.115 + hash(id + 2.2) * 0.055) * (0.92 + uBeat * 0.16);
               float d = length(gp - c);
-              col = mix(col, dc, (1.0 - smoothstep(rr - aa, rr + aa, d)) * a);
+              float m = (1.0 - smoothstep(rr - aa, rr + aa, d)) * a;
+
+              // Dots are small and most pixels are covered by none of the
+              // nine, so the colour work only runs where it lands. That
+              // matters more now that some dots read a texture.
+              if (m > 0.002) {
+                float hs = hash(id + stp * 5.3);
+                float v  = hash(id + stp * 8.9);
+                vec3 dc = hue2rgb(hs);
+                dc = mix(dc, vec3(1.0), 0.10 + v * 0.22);        // not all full chroma
+                dc = mix(dc, vec3(0.055), step(v, 0.11));         // a few near-black
+                dc = mix(dc, vec3(0.95), step(0.11, v) * step(v, 0.20));
+                // With a second picture loaded, some dots are lifted straight
+                // out of it — one flat sample each, so they stay dots.
+                if (uHasTexB > 0.5 && hash(id + stp * 6.1) < 0.38) {
+                  dc = texB(coverUVB(vec2(c.x / aspect, c.y)));
+                }
+                col = mix(col, dc, m);
+              }
             }
           }
 
@@ -807,7 +924,8 @@ const FX = {
 
           if (bestIn > 0.5) {
             float kind = hash(bestId + 6.6);
-            vec3 shot = tex(coverUV(uv + par));
+            vec3 shot = pick(uv + par,
+                             uHasTexB > 0.5 ? step(hash(bestId + 2.9), 0.40) : 0.0);
             // A few shapes are flat colour rather than photograph — the
             // reference alternates them, and without the flat ones the whole
             // sheet reads as one picture behind a mask.
@@ -857,7 +975,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uDev','uShuffle','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -978,6 +1096,9 @@ const FX = {
     gl.uniform1f(this.u.uMedNorm, p.medianNorm);
     gl.uniform1f(this.u.uDev, p.dev);
     gl.uniform1f(this.u.uShuffle, p.shuffle);
+    gl.uniform1f(this.u.uLumLoB, p.lumLoB);
+    gl.uniform1f(this.u.uLumHiB, p.lumHiB);
+    gl.uniform1f(this.u.uMedNormB, p.medianNormB);
     gl.uniform1i(this.u.uMode, p.mode);
     gl.uniform1f(this.u.uBass, p.bass);
     gl.uniform1f(this.u.uMid, p.mid);
