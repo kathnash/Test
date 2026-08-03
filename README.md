@@ -1,10 +1,10 @@
-# Resonate — sound-reactive visuals
+# Sound reactive animation playground
 
 Two pages that listen to audio and animate to it in real time. No build step, no dependencies,
 no server.
 
 - **`index.html`** — spectrum-driven visuals (Bloom / Particles / Ribbon)
-- **`album.html`** — album artwork dissolved into drifting colour fields that breathe with the music
+- **`album.html`** — the playground: an image or video reworked by nine sound-reactive styles
 - **`audio.js`** — the analysis engine both pages share
 - **`fx.js`** — the WebGL distortion looks used by `album.html`
 

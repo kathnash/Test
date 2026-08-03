@@ -7,8 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Resonate">
-<title>Resonate — ambient album art</title>
+<meta name="apple-mobile-web-app-title" content="Sound reactive">
+<title>Sound reactive animation playground</title>
 <style>
   :root{
     --ui: rgba(255,255,255,.92);
@@ -93,7 +93,7 @@
   #swatches i{ width:15px; height:15px; border-radius:4px; display:block; box-shadow:0 0 0 1px rgba(255,255,255,.15) inset; }
 
   #lookmenu{
-    position:fixed; z-index:22; left:14px; bottom:60px;
+    position:fixed; z-index:22; left:14px; bottom:60px; max-width:calc(100vw - 24px);
     display:none; flex-direction:column; gap:2px; padding:6px;
     border-radius:14px; border:1px solid var(--line); background:var(--panel);
     backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
@@ -127,8 +127,8 @@
 
 <div id="gate">
   <div class="mark"></div>
-  <h1>Ambient album art</h1>
-  <p class="sub">Artwork dissolved into drifting colour fields that breathe with the music. Pick where the sound comes from.</p>
+  <h1>Sound reactive animation playground</h1>
+  <p class="sub">created by Kath Nash</p>
   <div class="choices">
     <button class="src" id="btn-mic"><span class="ico">🎙️</span><span class="txt"><b>Microphone</b><span>Play music out loud from anything. Works on phone and desktop.</span></span></button>
     <button class="src" id="btn-tab"><span class="ico">🖥️</span><span class="txt"><b>This device's audio</b><span>Desktop Chrome or Edge. Tick “share audio” in the picker.</span></span></button>
@@ -139,15 +139,15 @@
 </div>
 
 <div id="hud">
-  <button class="chip" id="art">Artwork…</button>
-  <button class="chip" id="art2">2nd image…</button>
-  <button class="chip" id="look">Poster</button>
+  <button class="chip" id="art">Image 1</button>
+  <button class="chip" id="art2">Image 2</button>
+  <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
   <span id="swatches"></span>
-  <button class="chip" id="restart">Change source</button>
+  <button class="chip" id="restart">Audio source</button>
 </div>
 
 <div id="lookmenu"></div>
@@ -525,29 +525,33 @@ const is = name => LOOKS[look].name === name;
    choice sets the whole ramp rather than exposing shadows and highlights
    separately: the four printed tones follow a hue arc, not a straight line
    from paper to deep, and two independent pickers would let that arc be
-   broken in ways no darkroom process produces. Blue is the default and its
-   numbers are exactly the original cyanotype. */
+   broken in ways no darkroom process produces.
+
+   `bg` is Fields' ground and is a real colour, not a paper tint. The first
+   pass set every ground to a near-white version of its tone, which was
+   working exactly as written and looked completely broken: white with a
+   whisper of colour in it is white. */
 const TONES = [
   { name: 'Blue',
-    paper: [0.878, 0.918, 0.965], light: [0.596, 0.729, 0.867],
-    mid:   [0.114, 0.208, 0.545], deep:  [0.063, 0.094, 0.325],
-    coatPale: [0.815, 0.755, 0.800], coatMid: [0.560, 0.480, 0.575],
-    coatDeep: [0.330, 0.270, 0.395], bg: [0.945, 0.937, 0.921] },
+    paper: [0.929, 0.945, 1.000], light: [0.478, 0.612, 0.937],
+    mid:   [0.098, 0.239, 0.808], deep:  [0.035, 0.090, 0.392],
+    coatPale: [0.812, 0.796, 0.871], coatMid: [0.541, 0.522, 0.667],
+    coatDeep: [0.278, 0.267, 0.420], bg: [0.494, 0.616, 0.949] },
   { name: 'Green',
-    paper: [0.918, 0.941, 0.898], light: [0.639, 0.780, 0.596],
-    mid:   [0.129, 0.396, 0.243], deep:  [0.055, 0.204, 0.129],
-    coatPale: [0.835, 0.831, 0.757], coatMid: [0.545, 0.576, 0.463],
-    coatDeep: [0.278, 0.337, 0.243], bg: [0.949, 0.949, 0.925] },
+    paper: [0.929, 1.000, 0.933], light: [0.478, 0.847, 0.529],
+    mid:   [0.055, 0.639, 0.208], deep:  [0.020, 0.286, 0.106],
+    coatPale: [0.808, 0.843, 0.792], coatMid: [0.529, 0.596, 0.502],
+    coatDeep: [0.259, 0.337, 0.243], bg: [0.494, 0.824, 0.541] },
   { name: 'Yellow',
-    paper: [0.976, 0.957, 0.878], light: [0.898, 0.784, 0.412],
-    mid:   [0.686, 0.463, 0.078], deep:  [0.310, 0.196, 0.043],
-    coatPale: [0.886, 0.855, 0.784], coatMid: [0.686, 0.612, 0.463],
-    coatDeep: [0.392, 0.318, 0.204], bg: [0.976, 0.961, 0.918] },
+    paper: [1.000, 0.980, 0.898], light: [1.000, 0.855, 0.353],
+    mid:   [0.965, 0.729, 0.031], deep:  [0.451, 0.325, 0.020],
+    coatPale: [0.867, 0.843, 0.769], coatMid: [0.639, 0.588, 0.435],
+    coatDeep: [0.361, 0.310, 0.184], bg: [0.961, 0.827, 0.310] },
   { name: 'Red',
-    paper: [0.973, 0.933, 0.918], light: [0.898, 0.576, 0.541],
-    mid:   [0.616, 0.114, 0.153], deep:  [0.267, 0.043, 0.078],
-    coatPale: [0.878, 0.808, 0.792], coatMid: [0.647, 0.478, 0.478],
-    coatDeep: [0.376, 0.216, 0.239], bg: [0.976, 0.949, 0.937] }
+    paper: [1.000, 0.937, 0.929], light: [0.965, 0.541, 0.478],
+    mid:   [0.851, 0.086, 0.086], deep:  [0.380, 0.031, 0.043],
+    coatPale: [0.867, 0.804, 0.792], coatMid: [0.635, 0.502, 0.494],
+    coatDeep: [0.361, 0.243, 0.251], bg: [0.949, 0.514, 0.447] }
 ];
 let tone = 0;
 const toneOf = () => TONES[tone];
@@ -1196,7 +1200,7 @@ async function begin(kind) {
       // Embedded pages are usually denied the microphone by the host
       // frame's permissions policy, and the error is indistinguishable
       // from the user clicking Block.
-      (window.self !== window.top ? ' If this page is embedded, open it in its own browser tab — embedded pages are often blocked from using the microphone.' : '');
+      (window.self !== window.top ? ' If this page is embedded, open it in its own browser tab. Embedded pages are often blocked from using the microphone.' : '');
     else if (n === 'NotFoundError' || n === 'NotSupportedError' || n === 'TypeError') errEl.textContent = 'This browser can’t capture that source. Try the microphone.';
     else errEl.textContent = 'Couldn’t start audio: ' + (e && e.message ? e.message : 'unknown');
     return;
@@ -1215,7 +1219,7 @@ const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 if (isIOS || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
   const b = document.getElementById('btn-tab');
   b.disabled = true;
-  b.querySelector('.txt span').textContent = 'Not available on this device — iOS can’t expose other apps’ audio. Use the microphone.';
+  b.querySelector('.txt span').textContent = 'Not available on this device. iOS can’t expose other apps’ audio, so use the microphone.';
 }
 
 // --- artwork input: file picker, drag-drop, or a pasted URL -----------
@@ -1241,7 +1245,7 @@ toneEl.onclick = () => { tone = (tone + 1) % TONES.length; paintTone(); };
 
 const art2El = document.getElementById('art2');
 function paintLayer2Chip() {
-  art2El.textContent = LAYER2.img ? '2nd image ✕' : '2nd image…';
+  art2El.textContent = LAYER2.img ? 'Image 2 ✕' : 'Image 2';
 }
 // One control, two states: it loads a second picture, and once there is one
 // the same button removes it. A separate clear button would sit in the HUD
@@ -1379,7 +1383,7 @@ function setLookIndex(i) {
     // cannot flash while the trail-fade looks build back up.
     g.fillStyle = ART.dark; g.fillRect(0, 0, W, H);
   }
-  document.getElementById('look').textContent = LOOKS[look].name;
+  document.getElementById('look').textContent = 'Style: ' + LOOKS[look].name;
   paintTone();
   buildLookMenu();
 }
@@ -1387,7 +1391,20 @@ document.getElementById('look').onclick = e => {
   e.stopPropagation();
   buildLookMenu();
   lookMenu.classList.toggle('on');
+  if (lookMenu.classList.contains('on')) placeLookMenu(e.currentTarget);
 };
+
+// The menu was pinned to the left edge of the page, so on a wrapped HUD it
+// could open a long way from the button that produced it. It now sits over
+// its own button, clamped to stay on screen. Measured after the menu is
+// visible, because a display:none element has no width to clamp against.
+function placeLookMenu(btn) {
+  const b = btn.getBoundingClientRect();
+  const w = lookMenu.offsetWidth;
+  const max = innerWidth - w - 12;
+  lookMenu.style.left = Math.round(Math.max(12, Math.min(b.left, max))) + 'px';
+  lookMenu.style.bottom = Math.round(innerHeight - b.top + 8) + 'px';
+}
 addEventListener('pointerdown', e => {
   if (!lookMenu.contains(e.target) && e.target.id !== 'look') lookMenu.classList.remove('on');
 });
@@ -1412,13 +1429,13 @@ const standalone = window.navigator.standalone === true ||
 if (standalone) {
   fullBtn.remove();                       // already running without chrome
 } else if (!fsEnter) {
-  fullBtn.onclick = () => flash('This browser has no full screen. Tap Share, then Add to Home Screen — opening it from there runs with no browser bars.');
+  fullBtn.onclick = () => flash('This browser has no full screen. Tap Share, then Add to Home Screen, and opening it from there runs with no browser bars.');
 } else {
   fullBtn.onclick = () => {
     try {
       if (!fsActive()) fsEnter.call(rootEl);
       else if (fsExit) fsExit.call(document);
-    } catch (e) { flash('This browser has no full screen. Tap Share, then Add to Home Screen — opening it from there runs with no browser bars.'); }
+    } catch (e) { flash('This browser has no full screen. Tap Share, then Add to Home Screen, and opening it from there runs with no browser bars.'); }
   };
 }
 document.getElementById('restart').onclick = () => {

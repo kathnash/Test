@@ -7,8 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Resonate">
-<title>Resonate — sound reactive visuals</title>
+<meta name="apple-mobile-web-app-title" content="Sound reactive">
+<title>Sound reactive animation playground</title>
 <style>
   :root{
     --ui: rgba(255,255,255,.92);
@@ -105,7 +105,7 @@
 
 <div id="gate">
   <div class="mark"></div>
-  <h1>Resonate</h1>
+  <h1>Sound reactive animation playground</h1>
   <p class="sub">Turn whatever is playing into light. Pick where the sound should come from.</p>
 
   <div class="choices">
@@ -117,7 +117,7 @@
     <button class="src" id="btn-tab">
       <span class="ico">🖥️</span>
       <span class="txt"><b>Capture audio from this device</b>
-      <span>Cleanest signal. Desktop Chrome or Edge only — pick a tab or screen and tick “share audio”.</span></span>
+      <span>Cleanest signal. Desktop Chrome or Edge only. Pick a tab or screen and tick “share audio”.</span></span>
     </button>
     <button class="src" id="btn-demo">
       <span class="ico">✳️</span>
@@ -130,7 +130,7 @@
   <p class="note">Audio is analysed on-device and never leaves this page or gets recorded.</p>
 </div>
 
-<div id="silent">No sound detected yet — turn the volume up, or move closer to the speaker.</div>
+<div id="silent">No sound detected yet. Turn the volume up, or move closer to the speaker.</div>
 
 <div id="hud">
   <button class="chip" id="mode">Bloom</button>
@@ -384,7 +384,7 @@ async function begin(kind) {
       errEl.textContent = 'No audio came through. Re-open the picker and tick the “Share tab audio” / “Share system audio” checkbox before confirming.';
     } else if (n === 'NotAllowedError' || n === 'SecurityError') {
       errEl.textContent = 'Permission denied. Allow access, then try again.' +
-      (window.self !== window.top ? ' If this page is embedded, open it in its own browser tab — embedded pages are often blocked from using the microphone.' : '');
+      (window.self !== window.top ? ' If this page is embedded, open it in its own browser tab. Embedded pages are often blocked from using the microphone.' : '');
     } else if (n === 'NotFoundError' || n === 'NotSupportedError' || n === 'TypeError') {
       errEl.textContent = 'This browser can’t capture that source. Try the microphone option instead.';
     } else {
