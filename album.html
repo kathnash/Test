@@ -168,6 +168,7 @@
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
+  <button class="chip" id="rec">Record 10s</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
   <span id="swatches"></span>
@@ -1421,6 +1422,9 @@ function buildLookMenu() {
   });
 }
 function setLookIndex(i) {
+  // The recorder is bound to whichever canvas the current style draws to, and
+  // the two swap when a 2D style and a shader style trade places.
+  if (recording) return;
   look = i;
   const usingFX = !!LOOKS[look].fx;
   document.body.classList.toggle('fx', usingFX);
@@ -1457,6 +1461,86 @@ function placeLookMenu(btn) {
 addEventListener('pointerdown', e => {
   if (!lookMenu.contains(e.target) && e.target.id !== 'look') lookMenu.classList.remove('on');
 });
+/* =====================================================================
+   RECORDING
+
+   Ten seconds of just the animation. The HUD, the style menu and every word
+   on the page are DOM nodes rather than canvas pixels, so capturing the
+   canvas leaves them out on its own - nothing has to be hidden, and what
+   lands in the file is exactly the artwork.
+
+   The stream is bound to one canvas, and the two canvases swap when the look
+   changes between a 2D style and a shader one, so switching mid-clip would
+   record a canvas nobody is drawing to. The style is held for the duration
+   instead.
+   ===================================================================== */
+const RECORD_SECONDS = 10;
+let recording = false;
+const recBtn = document.getElementById('rec');
+
+function recorderMime() {
+  if (!window.MediaRecorder) return null;
+  // mp4 first: iOS records only mp4, and everything else opens it happily.
+  const want = ['video/mp4;codecs=avc1.42E01E', 'video/mp4',
+                'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  return want.find(t => MediaRecorder.isTypeSupported(t)) || null;
+}
+
+async function deliver(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  // Share first where it exists: on a phone a blob download either opens the
+  // video in a tab or goes nowhere, while the share sheet can save it to the
+  // camera roll.
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function recordClip() {
+  if (recording) return;
+  const target = LOOKS[look].fx ? document.getElementById('fxc') : cv;
+  const mime = recorderMime();
+  if (!target.captureStream || !mime) {
+    flash('This browser cannot record the canvas. Try Chrome, Edge or Safari.');
+    return;
+  }
+  let rec;
+  try {
+    rec = new MediaRecorder(target.captureStream(30),
+                            { mimeType: mime, videoBitsPerSecond: 12000000 });
+  } catch (e) { flash('Could not start recording here.'); return; }
+
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = async () => {
+    recording = false;
+    clearInterval(tick);
+    recBtn.textContent = 'Record 10s';
+    const ext = mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+    const blob = new Blob(chunks, { type: mime });
+    if (!blob.size) { flash('Nothing was captured.'); return; }
+    await deliver(blob, `${LOOKS[look].name.toLowerCase()}.${ext}`);
+  };
+
+  recording = true;
+  rec.start();
+  let left = RECORD_SECONDS;
+  recBtn.textContent = 'Recording ' + left;
+  const tick = setInterval(() => {
+    left--;
+    if (left > 0) recBtn.textContent = 'Recording ' + left;
+  }, 1000);
+  setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); },
+             RECORD_SECONDS * 1000);
+}
+recBtn.onclick = recordClip;
+
 /* iPhone Safari implements no Fullscreen API whatsoever — only <video>
    elements can go fullscreen there. iPad and desktop Safari do support it.
    The previous code read
