@@ -168,7 +168,8 @@
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
-  <button class="chip" id="rec">Record 20s</button>
+  <button class="chip" id="shot">Photo</button>
+  <button class="chip" id="rec">Video 25s</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
   <span id="swatches"></span>
@@ -1218,7 +1219,12 @@ function frame(now) {
   // smooth the underlying band is.
   rippleSwell += (swTarget - rippleSwell) *
                  (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.55 : 1.30)));
-  if (LOOKS[look].fx) { drawFX(LOOKS[look]); requestAnimationFrame(frame); return; }
+  if (LOOKS[look].fx) {
+    drawFX(LOOKS[look]);
+    takeStillIfAsked();
+    requestAnimationFrame(frame);
+    return;
+  }
   updateBlobs(dt);
   drawScene(dt);
 
@@ -1232,7 +1238,21 @@ function frame(now) {
     g.globalCompositeOperation = 'source-over';
   }
 
+  takeStillIfAsked();
   requestAnimationFrame(frame);
+}
+
+// Called from inside the frame, after the draw and before the browser
+// composites, which is the only moment the shader canvas can be read.
+function takeStillIfAsked() {
+  if (!pendingStill) return;
+  pendingStill = false;
+  const btn = document.getElementById('shot');
+  try {
+    deliver(stillFromCanvas(), LOOKS[look].name.toLowerCase() + '.png')
+      .catch(() => {});
+  } catch (e) { flash('Could not save the image.'); }
+  btn.textContent = 'Photo';
 }
 
 /* =====================================================================
@@ -1498,11 +1518,32 @@ addEventListener('pointerdown', e => {
    record a canvas nobody is drawing to. The style is held for the duration
    instead.
    ===================================================================== */
-const RECORD_SECONDS = 20;
+const RECORD_SECONDS = 25;
 // Derived, so the label and the timer cannot drift apart.
-const RECORD_LABEL = 'Record ' + RECORD_SECONDS + 's';
+const RECORD_LABEL = 'Video ' + RECORD_SECONDS + 's';
 let recording = false;
 const recBtn = document.getElementById('rec');
+
+/* A still of the same thing, and the reason it is a flag rather than a
+   function that just reads the canvas: the shader canvas is created without
+   preserveDrawingBuffer, so its pixels are gone the moment the frame is
+   composited and anything reading it from a click handler gets an empty
+   image. Turning it on instead would make every shader look pay for a
+   second buffer on every frame to serve a button pressed once. So the click
+   raises a flag and the render loop reads the canvas immediately after
+   drawing, while the buffer is still there. */
+let pendingStill = false;
+
+function stillFromCanvas() {
+  const target = LOOKS[look].fx ? document.getElementById('fxc') : cv;
+  // Synchronous read. toBlob defers, and by the time it runs the buffer this
+  // is trying to capture may already have been cleared.
+  const url = target.toDataURL('image/png');
+  const bin = atob(url.slice(url.indexOf(',') + 1));
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: 'image/png' });
+}
 
 function recorderMime() {
   if (!window.MediaRecorder) return null;
@@ -1566,6 +1607,13 @@ function recordClip() {
              RECORD_SECONDS * 1000);
 }
 recBtn.onclick = recordClip;
+
+const shotBtn = document.getElementById('shot');
+shotBtn.onclick = () => {
+  if (recording || pendingStill) return;
+  pendingStill = true;
+  shotBtn.textContent = 'Saving…';
+};
 
 /* iPhone Safari implements no Fullscreen API whatsoever — only <video>
    elements can go fullscreen there. iPad and desktop Safari do support it.
