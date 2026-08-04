@@ -75,6 +75,7 @@ const FX = {
       uniform float uLumLoB, uLumHiB, uMedNormB;
       uniform float uMorph;    // integrated, not uTime * rate
       uniform float uLensShuf; // integrated, and zero while it is quiet
+      uniform float uFocus;    // Blur's own envelope, quicker than the swell
       // Cyanotype's four printed tones and its three unwashed coating tones,
       // plus Fields' ground. Passed rather than derived from a single colour
       // because the blue palette follows a hue arc, not a straight line from
@@ -710,11 +711,15 @@ const FX = {
           vec2 par = vec2(sin(uTime * 0.037) * 0.016 + sin(uTime * 0.017) * 0.010,
                           cos(uTime * 0.029) * 0.014 + cos(uTime * 0.013) * 0.009);
 
-          // Depth of field breathes. The shallow end is still a heavy
-          // defocus: this look is never allowed to resolve into the picture,
-          // because the moment it does it stops being this and starts being
-          // the artwork with a filter on it.
-          float r = 0.058 - uSwell * 0.030 + uBeat * 0.008;
+          // Depth of field breathes, across a three-to-one range on its own
+          // envelope rather than the two-to-one it had on the water swell.
+          // That swell is tuned for depth of water and rises over half a
+          // second, which is right for Ripple and too slow here: a defocus
+          // that lags the music by that much reads as unrelated to it. The
+          // shallow end is still a heavy defocus, because the moment this
+          // look resolves it stops being this and starts being the artwork
+          // with a filter on it.
+          float r = 0.068 - uFocus * 0.046 + uBeat * 0.006;
 
           // The disc is slightly elliptical and its axis turns slowly, so the
           // bokeh smears along a direction that drifts instead of staying
@@ -741,7 +746,7 @@ const FX = {
             float ar5 = uRes.x / max(uRes.y, 1.0);
             vec2 q = vec2(uv.x * ar5, uv.y) - vec2(ar5 * 0.5, 0.5)
                    + vec2(sin(uTime * 0.023) * 0.017, cos(uTime * 0.019) * 0.014);
-            q /= vec2(0.205, 0.300) * (1.0 + uSwell * 0.10);
+            q /= vec2(0.205, 0.300) * (1.0 + uFocus * 0.22);
             // A defined edge with only a suggestion of feather, so it reads as
             // a cut aperture rather than as a soft glow bleeding into the
             // defocus behind it.
@@ -749,7 +754,7 @@ const FX = {
           }
 
           float a0 = hash(floor(vUv * uRes)) * 6.2831853;
-          float pw = 2.6 + uLevel * 1.5;      // louder blooms harder
+          float pw = 2.2 + uLevel * 2.8;      // louder blooms harder
           vec3 acc = vec3(0.0);
           float wsum = 0.0;
           for (int i = 0; i < 18; i++){
@@ -783,8 +788,12 @@ const FX = {
           float mid = 1.0 - abs(g - 0.5) * 1.6;
           col += (gr - 0.5) * 0.155 * max(0.32, mid);
 
+          // The whole sheet lifts a little on a transient, the way a
+          // defocused photograph blooms when more light reaches it.
+          col *= 1.0 + uBeat * 0.11;
+
           vec2 vc = (vUv - 0.5) * vec2(uRes.x / max(uRes.y, 1.0), 1.0);
-          col *= 1.0 - dot(vc, vc) * 0.15;
+          col *= 1.0 - dot(vc, vc) * (0.15 - uFocus * 0.04);
         }
 
         // ================================================================
@@ -1102,7 +1111,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -1225,6 +1234,7 @@ const FX = {
     gl.uniform1f(this.u.uShuffle, p.shuffle);
     gl.uniform1f(this.u.uMorph, p.morph);
     gl.uniform1f(this.u.uLensShuf, p.lensShuffle);
+    gl.uniform1f(this.u.uFocus, p.focus);
     const T = p.tone;
     gl.uniform3fv(this.u.uTPaper, T.paper);
     gl.uniform3fv(this.u.uTLight, T.light);

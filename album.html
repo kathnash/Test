@@ -71,13 +71,13 @@
     appearance:none; cursor:pointer; text-align:left; display:flex; align-items:center; gap:13px;
     padding:13px 15px; border-radius:13px; border:1px solid rgba(255,255,255,.15);
     background:rgba(255,255,255,.07); color:var(--ui); font:inherit;
+    padding-left:17px;
     backdrop-filter:blur(20px) saturate(1.4); -webkit-backdrop-filter:blur(20px) saturate(1.4);
     transition: background .18s, border-color .18s, transform .12s;
   }
   button.src:hover{ background:rgba(255,255,255,.13); border-color:rgba(255,255,255,.34); }
   button.src:active{ transform:scale(.985); }
   button.src[disabled]{ opacity:.32; cursor:not-allowed; }
-  .ico{ font-size:17px; width:22px; text-align:center; flex:none; opacity:.9; }
   .txt b{ display:block; font-weight:550; font-size:14.5px; letter-spacing:-.01em; }
   .txt span{ display:block; color:rgba(255,255,255,.5); font-size:12px; line-height:1.4; margin-top:2px; }
   #err{ color:#fda4af; font-size:13px; min-height:1em; max-width:40ch; margin:14px 0 0; }
@@ -154,9 +154,9 @@
   <p class="sub">created by Kath Nash</p>
   <span class="rule"></span>
   <div class="choices">
-    <button class="src" id="btn-mic"><span class="ico">🎙️</span><span class="txt"><b>Microphone</b><span>Play music out loud from anything. Works on phone and desktop.</span></span></button>
-    <button class="src" id="btn-tab"><span class="ico">🖥️</span><span class="txt"><b>This device's audio</b><span>Desktop Chrome or Edge. Tick “share audio” in the picker.</span></span></button>
-    <button class="src" id="btn-demo"><span class="ico">✳️</span><span class="txt"><b>Demo tone</b><span>No permissions needed.</span></span></button>
+    <button class="src" id="btn-mic"><span class="txt"><b>Microphone</b><span>Play music out loud from anything. Works on phone and desktop.</span></span></button>
+    <button class="src" id="btn-tab"><span class="txt"><b>This device's audio</b><span>Desktop only. Tick “share audio” in the picker.</span></span></button>
+    <button class="src" id="btn-demo"><span class="txt"><b>Demo tone</b><span>No permissions needed.</span></span></button>
   </div>
   <p id="err"></p>
   <p class="note">Drop an image or a video on the page at any time to use it as the source.</p>
@@ -558,22 +558,29 @@ const TONES = [
     paper: [0.929, 0.945, 1.000], light: [0.478, 0.612, 0.937],
     mid:   [0.098, 0.239, 0.808], deep:  [0.035, 0.090, 0.392],
     coatPale: [0.812, 0.796, 0.871], coatMid: [0.541, 0.522, 0.667],
-    coatDeep: [0.278, 0.267, 0.420], bg: [0.494, 0.616, 0.949] },
+    coatDeep: [0.278, 0.267, 0.420], bg: [0.231, 0.475, 0.859] },
   { name: 'Green',
     paper: [0.929, 1.000, 0.933], light: [0.478, 0.847, 0.529],
     mid:   [0.055, 0.639, 0.208], deep:  [0.020, 0.286, 0.106],
     coatPale: [0.808, 0.843, 0.792], coatMid: [0.529, 0.596, 0.502],
-    coatDeep: [0.259, 0.337, 0.243], bg: [0.494, 0.824, 0.541] },
+    coatDeep: [0.259, 0.337, 0.243], bg: [0.043, 0.549, 0.314] },
   { name: 'Yellow',
     paper: [1.000, 0.980, 0.898], light: [1.000, 0.855, 0.353],
     mid:   [0.965, 0.729, 0.031], deep:  [0.451, 0.325, 0.020],
     coatPale: [0.867, 0.843, 0.769], coatMid: [0.639, 0.588, 0.435],
-    coatDeep: [0.361, 0.310, 0.184], bg: [0.961, 0.827, 0.310] },
+    coatDeep: [0.361, 0.310, 0.184], bg: [0.969, 0.890, 0.000] },
   { name: 'Red',
     paper: [1.000, 0.937, 0.929], light: [0.965, 0.541, 0.478],
     mid:   [0.851, 0.086, 0.086], deep:  [0.380, 0.031, 0.043],
     coatPale: [0.867, 0.804, 0.792], coatMid: [0.635, 0.502, 0.494],
-    coatDeep: [0.361, 0.243, 0.251], bg: [0.949, 0.514, 0.447] }
+    coatDeep: [0.361, 0.243, 0.251], bg: [0.800, 0.153, 0.173] },
+  // Paper. Cyanotype prints this one in neutral greys, which is the only
+  // ramp that makes sense for a tone with no hue in it.
+  { name: 'White',
+    paper: [0.961, 0.945, 0.949], light: [0.639, 0.627, 0.635],
+    mid:   [0.267, 0.263, 0.271], deep:  [0.086, 0.086, 0.094],
+    coatPale: [0.851, 0.839, 0.843], coatMid: [0.576, 0.569, 0.576],
+    coatDeep: [0.290, 0.286, 0.294], bg: [0.961, 0.945, 0.949] }
 ];
 let tone = 0;
 const toneOf = () => TONES[tone];
@@ -895,7 +902,7 @@ function drawFX(cfg) {
     time, phase: ripplePhase, swell: rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
-    lensShuffle, tone: toneOf(),
+    lensShuffle, focus: blurFocus, tone: toneOf(),
     lumLoB: LAYER2.lumLo, lumHiB: LAYER2.lumHi, medianNormB: LAYER2.medianNorm,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
@@ -1052,6 +1059,9 @@ let morphPhase = 0;
 // Lens' picture-swap clock. Deliberately has no constant term, so the grid is
 // perfectly still until there is something to react to.
 let lensShuffle = 0;
+// Blur's focus depth. Its own envelope rather than the water swell: quicker,
+// and driven by the whole mix rather than by bass alone.
+let blurFocus = 0;
 // How far the cyanotype has developed, 0..1. A state the music moves, not a
 // position on a clock: sound is light, so it exposes toward a finished blue
 // print and slides back toward the raw violet sheet in the quiet.
@@ -1139,6 +1149,11 @@ function frame(now) {
   // circle over every second or so across the whole grid.
   lensShuffle += dt * (Math.max(0, resp(A.level) - 0.45) * 0.40 +
                        A.beat * A.beat * A.beat * 1.20);
+
+  const focusTarget = Math.min(1, resp(A.level) * 0.60 + resp(A.bass) * 0.30 +
+                                  A.beat * 0.32);
+  blurFocus += (focusTarget - blurFocus) *
+               (1 - Math.exp(-dt / (focusTarget > blurFocus ? 0.17 : 0.55)));
   const clTarget = Math.max(0, A.beat * 7.0 + resp(A.level) * 2.4 - 1.6);
   clusterR += (clTarget - clusterR) *
               (1 - Math.exp(-dt / (clTarget > clusterR ? 0.10 : 0.70)));
@@ -1253,7 +1268,7 @@ const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 if (isIOS || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
   const b = document.getElementById('btn-tab');
   b.disabled = true;
-  b.querySelector('.txt span').textContent = 'Not available on this device. iOS can’t expose other apps’ audio, so use the microphone.';
+  b.querySelector('.txt span').textContent = 'Desktop only. iOS can’t expose other apps’ audio, so use the microphone.';
 }
 
 // --- artwork input: file picker, drag-drop, or a pasted URL -----------

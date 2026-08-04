@@ -23,6 +23,7 @@ const A = {
   _stat: { bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
            air:{mu:0,sd:.02}, level:{mu:0,sd:.02} },
   _prevSpec: null, _fluxHist: [], _beatRaw: 0,
+  _floor: 0.002,          // learned noise floor, see update()
   // Envelope shaping. Attack keeps transients legible, release stops the
   // fall from flickering, and the second glide stage removes the velocity
   // kink where the follower switches between the two.
@@ -177,8 +178,8 @@ const A = {
     // frame-to-frame noise by 1/sd — so on ambient material, where sd is
     // genuinely tiny, the output turned to jitter. The floor caps that gain.
     const sd = Math.max(s.sd, this.SD_FLOOR);
-    const rel = Math.min(1, Math.max(0, 0.5 + (raw - s.mu) / (4.0 * sd)));
-    const v = rel * 0.58 + this._norm(key, raw) * 0.42;
+    const rel = Math.min(1, Math.max(0, 0.5 + (raw - s.mu) / (3.3 * sd)));
+    const v = rel * 0.64 + this._norm(key, raw) * 0.36;
 
     // Envelope follower: rise quickly so transients still land, fall slowly so
     // the result glides instead of flickering. A symmetric smoother would have
@@ -211,9 +212,27 @@ const A = {
     const rawAir  = this._band(5000, 14000);
     const rawLvl  = (rawBass + rawMid + rawHigh + rawAir) / 4;
 
-    // Near-silence should read as still, not as amplified noise: the
-    // relative measure would otherwise make room tone look like music.
-    const target = Math.min(1, Math.max(0, (rawLvl - 0.004) / 0.020));
+    /* Near-silence should read as still, not as amplified noise, because the
+       relative measure would otherwise make room tone look like music. That
+       used to be a pair of absolute constants, and two constants cannot know
+       how loud a room is. A phone picking up ambient music from across a room
+       lands squarely inside that fade: measured, presence sat at 0.31 on very
+       quiet material and 0.80 on quiet ambient, and every band downstream was
+       scaled to a third of its range. It was not that the engine could not
+       see the music - it saw it and then turned it down.
+
+       The floor is learned instead. It follows the signal down quickly and
+       creeps up only while the signal is near it, so it settles on the
+       quietest thing the room does and does not drift upward into sustained
+       music. Presence is then how far above its own floor the signal sits,
+       which is the same question in a quiet room and a loud one. */
+    if (rawLvl < this._floor) {
+      this._floor += (rawLvl - this._floor) * (1 - Math.exp(-dt / 0.8));
+    } else if (rawLvl < this._floor * 3.0) {
+      this._floor += (rawLvl - this._floor) * (1 - Math.exp(-dt / 20));
+    }
+    const target = Math.min(1, Math.max(0,
+      (rawLvl - this._floor) / Math.max(0.0035, this._floor * 1.5)));
     this.presence += (target - this.presence) * (1 - Math.exp(-dt / 0.35));
 
     this.bass  = this._react('bass',  rawBass, dt) * this.presence;
@@ -287,7 +306,7 @@ const A = {
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     if (this.ctx) this.ctx.close();
     Object.assign(this, {
-      ctx:null, stream:null, osc:null, ready:false, presence:0,
+      ctx:null, stream:null, osc:null, ready:false, presence:0, _floor:0.002,
       beat:0, beatFlash:0, bpm:0, _beatRaw:0, _hist:[], _beatTimes:[],
       _prevSpec:null, _fluxHist:[],
       _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 },
