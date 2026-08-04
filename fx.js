@@ -941,7 +941,10 @@ const FX = {
               // glitch; a dot that dissolves and reappears reads as a shuffle.
               float a = smoothstep(0.0, 0.16, fr) * (1.0 - smoothstep(0.84, 1.0, fr));
 
-              float rr = cell * (0.115 + hash(id + 2.2) * 0.055) * (0.92 + uBeat * 0.16);
+              // The dots pop on the beat as well as reshuffling on it, so the
+              // reaction is visible in the frames between one shuffle and the
+              // next rather than only at the moment a dot moves.
+              float rr = cell * (0.115 + hash(id + 2.2) * 0.055) * (0.84 + uBeat * 0.46);
               float d = length(gp - c);
               float m = (1.0 - smoothstep(rr - aa, rr + aa, d)) * a;
               vec2 dotUv = vec2(c.x / aspect, c.y);
@@ -1010,8 +1013,16 @@ const FX = {
           vec2 cell = vec2(aspect / 2.1, 1.0 / 5.2);
           vec2 base = floor(gp / cell);
 
+          // The cutouts hold still while the photograph inside them jolts on
+          // the beat. Edges that stay put make the shift underneath far more
+          // legible than moving everything together would. Squared, because
+          // at 120bpm the beat envelope has not returned to zero before the
+          // next one lands, and a linear term lifts the whole interval rather
+          // than marking the hit - measured, that cost more in correlation
+          // than the extra movement bought.
           vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
-                   * (0.6 + uLevel * 1.4);
+                   * (0.6 + uLevel * 1.4)
+                   + vec2(uBeat * uBeat * 0.030, uBeat * uBeat * -0.020);
 
           // Nearest blob wins, so overlapping shapes resolve to one surface
           // instead of blending into each other. Evaluated over a 3x3
@@ -1055,7 +1066,8 @@ const FX = {
               // by the slow envelope, so it swells rather than snapping.
               float own = 0.5 + 0.5 * sin(uMorph * 0.8 + hash(id + 3.3) * 6.28);
               float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
-                        * (0.86 + uSwell * (0.20 + own * 0.22) + uBeat * own * 0.075);
+                        * (0.74 + uSwell * (0.24 + own * 0.28)
+                           + uBeat * uBeat * (0.18 + own * 0.46));
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
             }
