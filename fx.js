@@ -1022,7 +1022,7 @@ const FX = {
           // than the extra movement bought.
           vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
                    * (0.6 + uLevel * 1.4)
-                   + vec2(uBeat * uBeat * 0.030, uBeat * uBeat * -0.020);
+                   + vec2(uBeat * uBeat * 0.022, uBeat * uBeat * -0.015);
 
           // Nearest blob wins, so overlapping shapes resolve to one surface
           // instead of blending into each other. Evaluated over a 3x3
@@ -1066,8 +1066,8 @@ const FX = {
               // by the slow envelope, so it swells rather than snapping.
               float own = 0.5 + 0.5 * sin(uMorph * 0.8 + hash(id + 3.3) * 6.28);
               float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
-                        * (0.74 + uSwell * (0.24 + own * 0.28)
-                           + uBeat * uBeat * (0.18 + own * 0.46));
+                        * (0.77 + uSwell * (0.23 + own * 0.26)
+                           + uBeat * uBeat * (0.13 + own * 0.35));
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
             }

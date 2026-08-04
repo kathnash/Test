@@ -1165,7 +1165,7 @@ function frame(now) {
   // transient lands as a burst rather than lifting the whole interval.
   shufflePhase += dt * (Math.max(0, resp(A.level) - 0.30) * 0.55 +
                         A.beat * A.beat * 3.20);
-  morphPhase += dt * (0.10 + resp(A.level) * 0.80 + A.beat * A.beat * 2.20);
+  morphPhase += dt * (0.11 + resp(A.level) * 0.81 + A.beat * A.beat * 1.70);
   // Above a floor only, and the beat term is cubed so a weak transient counts
   // for almost nothing while a strong one carries the swap. Below the floor
   // this does not advance at all. Both are needed: with thirty circles on
