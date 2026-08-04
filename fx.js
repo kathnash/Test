@@ -747,9 +747,19 @@ const FX = {
           float ov = 0.0;
           if (uHasTexB > 0.5) {
             float ar5 = uRes.x / max(uRes.y, 1.0);
+            // Both radii are in units of screen height, so the oval is the
+            // same object on every display - which measured 25% of the width
+            // on a desktop and 82% of it on a phone. Narrow frames get it
+            // smaller, clamped so a desktop is untouched.
+            float ovScale = min(1.0, 0.68 + ar5 * 0.19);
+            // The float is scaled with it and much smaller than it was. At
+            // the old amplitude the centre wandered by ten pixels or so,
+            // which reads as off-centre rather than as drift once the shape
+            // is wide enough to nearly touch both edges.
             vec2 q = vec2(uv.x * ar5, uv.y) - vec2(ar5 * 0.5, 0.5)
-                   + vec2(sin(uTime * 0.023) * 0.017, cos(uTime * 0.019) * 0.014);
-            q /= vec2(0.205, 0.300) * (1.0 + uFocus * 0.22);
+                   + vec2(sin(uTime * 0.023) * 0.007,
+                          cos(uTime * 0.019) * 0.006) * ovScale;
+            q /= vec2(0.205, 0.300) * ovScale * (1.0 + uFocus * 0.22);
             // A defined edge with only a suggestion of feather, so it reads as
             // a cut aperture rather than as a soft glow bleeding into the
             // defocus behind it.
