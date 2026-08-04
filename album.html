@@ -168,7 +168,7 @@
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
-  <button class="chip" id="rec">Record 10s</button>
+  <button class="chip" id="rec">Record 20s</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
   <span id="swatches"></span>
@@ -1498,7 +1498,9 @@ addEventListener('pointerdown', e => {
    record a canvas nobody is drawing to. The style is held for the duration
    instead.
    ===================================================================== */
-const RECORD_SECONDS = 10;
+const RECORD_SECONDS = 20;
+// Derived, so the label and the timer cannot drift apart.
+const RECORD_LABEL = 'Record ' + RECORD_SECONDS + 's';
 let recording = false;
 const recBtn = document.getElementById('rec');
 
@@ -1545,7 +1547,7 @@ function recordClip() {
   rec.onstop = async () => {
     recording = false;
     clearInterval(tick);
-    recBtn.textContent = 'Record 10s';
+    recBtn.textContent = RECORD_LABEL;
     const ext = mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
     const blob = new Blob(chunks, { type: mime });
     if (!blob.size) { flash('Nothing was captured.'); return; }
