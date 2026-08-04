@@ -168,8 +168,8 @@
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
-  <button class="chip" id="shot">Photo</button>
-  <button class="chip" id="rec">Video 25s</button>
+  <button class="chip" id="shot">Download still</button>
+  <button class="chip" id="rec">Download video</button>
   <button class="chip" id="full">Fullscreen</button>
   <span class="spacer"></span>
   <span id="swatches"></span>
@@ -1252,7 +1252,7 @@ function takeStillIfAsked() {
     deliver(stillFromCanvas(), LOOKS[look].name.toLowerCase() + '.png')
       .catch(() => {});
   } catch (e) { flash('Could not save the image.'); }
-  btn.textContent = 'Photo';
+  btn.textContent = STILL_LABEL;
 }
 
 /* =====================================================================
@@ -1519,8 +1519,10 @@ addEventListener('pointerdown', e => {
    instead.
    ===================================================================== */
 const RECORD_SECONDS = 25;
-// Derived, so the label and the timer cannot drift apart.
-const RECORD_LABEL = 'Video ' + RECORD_SECONDS + 's';
+// Kept as constants so the buttons and the code that restores them after a
+// capture cannot drift apart.
+const RECORD_LABEL = 'Download video';
+const STILL_LABEL = 'Download still';
 let recording = false;
 const recBtn = document.getElementById('rec');
 
