@@ -133,7 +133,7 @@ const FX = {
           if (uDrops[i].w > 0.5){
             float d = distance(p, uDrops[i].xy);
             float age = uDrops[i].z;
-            h += sin(d * 18.0 - age * 5.5) * exp(-d * 2.2) * exp(-age * 1.1) * 0.42;
+            h += sin(d * 20.0 - age * 7.0) * exp(-d * 2.4) * exp(-age * 2.2) * 0.52;
           }
         }
         return h / 2.2;
@@ -264,7 +264,10 @@ const FX = {
           // fast rise moves every pixel of the image simultaneously — which
           // reads as a snap however smooth the underlying band is. Depth of
           // water should swell, not switch.
-          float amt = 0.0105 + uSwell * 0.0165;
+          // The swell carries depth over a phrase; the beat term carries the
+          // hit. Without it every driver here was slower than a beat, so
+          // nothing in the frame could land on one.
+          float amt = 0.0100 + uSwell * 0.0150 + uBeat * 0.0085;
           vec2 off = grad * amt;
 
           // A puddle of the second picture, spreading with the music. Its
@@ -312,7 +315,7 @@ const FX = {
           // Caustic glint along the crests. h must be clamped before the
           // power: unnormalised it exceeded 1 and blew whole regions white.
           float cr = clamp(h * 0.5 + 0.5, 0.0, 1.0);
-          col += pow(cr, 7.0) * (0.10 + uLevel * 0.18);
+          col += pow(cr, 7.0) * (0.10 + uLevel * 0.14 + uBeat * 0.32);
         }
 
         // ================================================================

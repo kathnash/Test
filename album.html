@@ -628,11 +628,12 @@ let drops = [], lastDrop = -9;
 function updateDrops(dt) {
   for (const d of drops) d.age += dt;
   drops = drops.filter(d => d.age < 6);
-  // A ring on every beat is a barrage: on anything with a fast or strong beat
-  // the surface never gets to settle between them, and four overlapping ring
-  // trains is most of what made Ripple feel frantic. One at a time, with a
-  // floor on the gap, so a ring reads as an event.
-  if (A.beatFlash > 0.9 && time - lastDrop > 1.15) {
+  // A ring on most beats, where before it was one per 1.15s and most beats
+  // produced nothing at all. What made this frantic originally was not the
+  // count but the decay: four ring trains overlapping for seconds each, so
+  // the surface never settled. The rings now fade in well under a second, so
+  // one or two are legible at a time and each still lands on its beat.
+  if (A.beatFlash > 0.9 && time - lastDrop > 0.30) {
     lastDrop = time;
     drops.push({ x: 0.15 + Math.random() * 1.2, y: Math.random(), age: 0 });
     if (drops.length > 4) drops.shift();
@@ -1134,7 +1135,18 @@ function frame(now) {
   }
 
   updateDrops(dt);
-  ripplePhase += dt * (0.24 + resp(A.level) * 0.10);
+  // The surface rushes forward on a transient and settles between. This is
+  // what actually reads as synchronised: measured against the demo tone, with
+  // a rate this flat the motion on beats was 1.03x the motion between them,
+  // which is to say the water moved at the same speed whether or not anything
+  // had happened. The base stays slow, so it is the surge that is visible
+  // rather than a fast churn that never stops - frantic came from continuous
+  // motion, and sync comes from discrete events.
+  // Squared, so the surge concentrates into the hit instead of spreading
+  // across the gap. At 120bpm the beat envelope has not returned to zero
+  // before the next one arrives, so a linear term lifts the whole interval
+  // and reads as everything moving faster rather than as a pulse.
+  ripplePhase += dt * (0.20 + resp(A.level) * 0.10 + A.beat * A.beat * 1.55);
   // Roughly a dot every 4s at rest, several a second when it is loud. Each
   // dot is offset within this by its own seed, so they take turns.
   // Weighted hard toward the music: at rest the field is close to still, and
