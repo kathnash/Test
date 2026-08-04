@@ -74,6 +74,7 @@ const FX = {
       // differently, which is most of the time.
       uniform float uLumLoB, uLumHiB, uMedNormB;
       uniform float uMorph;    // integrated, not uTime * rate
+      uniform float uLensShuf; // integrated, and zero while it is quiet
       // Cyanotype's four printed tones and its three unwashed coating tones,
       // plus Fields' ground. Passed rather than derived from a single colour
       // because the blue palette follows a hue arc, not a straight line from
@@ -503,9 +504,15 @@ const FX = {
             // shuffle clock on its own offset, so a loud passage trades a
             // scattering of them rather than flipping the grid at once, and
             // the last fifth of each step crossfades so nothing pops.
+            //
+            // Its own clock, not the one Dots uses. That one carries a small
+            // constant term, which is right for a field of dots and wrong
+            // here: spread across thirty circles on thirty different offsets,
+            // a rate that slow still meant one circle changing every second
+            // or so in silence. This clock stops dead when the music does.
             float selB = 0.0;
             if (uHasTexB > 0.5) {
-              float sp = uShuffle * 0.42 + hash(cell + 5.5) * 9.0;
+              float sp = uLensShuf + hash(cell + 5.5) * 9.0;
               float k0 = step(hash(cell + floor(sp) * 2.7), 0.42);
               float k1 = step(hash(cell + (floor(sp) + 1.0) * 2.7), 0.42);
               selB = mix(k0, k1, smoothstep(0.80, 1.0, fract(sp)));
@@ -1095,7 +1102,7 @@ const FX = {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
+    for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
                      'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
@@ -1217,6 +1224,7 @@ const FX = {
     gl.uniform1f(this.u.uDev, p.dev);
     gl.uniform1f(this.u.uShuffle, p.shuffle);
     gl.uniform1f(this.u.uMorph, p.morph);
+    gl.uniform1f(this.u.uLensShuf, p.lensShuffle);
     const T = p.tone;
     gl.uniform3fv(this.u.uTPaper, T.paper);
     gl.uniform3fv(this.u.uTLight, T.light);

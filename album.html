@@ -936,7 +936,8 @@ function drawFX(cfg) {
   FX.render({
     time, phase: ripplePhase, swell: rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
-    dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase, tone: toneOf(),
+    dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
+    lensShuffle, tone: toneOf(),
     lumLoB: LAYER2.lumLo, lumHiB: LAYER2.lumHi, medianNormB: LAYER2.medianNorm,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
@@ -1090,6 +1091,9 @@ let clusterR = 0, layer2Clock = 0;
 // Fields' outline morph. Integrated so the music can drive the rate without
 // jumping every shape to a different silhouette.
 let morphPhase = 0;
+// Lens' picture-swap clock. Deliberately has no constant term, so the grid is
+// perfectly still until there is something to react to.
+let lensShuffle = 0;
 // How far the cyanotype has developed, 0..1. A state the music moves, not a
 // position on a clock: sound is light, so it exposes toward a finished blue
 // print and slides back toward the raw violet sheet in the quiet.
@@ -1169,6 +1173,14 @@ function frame(now) {
   // what made it read as animation running regardless of the sound.
   shufflePhase += dt * (0.06 + resp(A.level) * 0.70 + A.beat * 2.10);
   morphPhase += dt * (0.16 + resp(A.level) * 0.85 + A.beat * 1.10);
+  // Above a floor only, and the beat term is cubed so a weak transient counts
+  // for almost nothing while a strong one carries the swap. Below the floor
+  // this does not advance at all. Both are needed: with thirty circles on
+  // thirty different offsets, the fraction that change over any interval is
+  // just the phase advance, so a rate that looks tiny on paper still turns a
+  // circle over every second or so across the whole grid.
+  lensShuffle += dt * (Math.max(0, resp(A.level) - 0.45) * 0.40 +
+                       A.beat * A.beat * A.beat * 1.20);
   const clTarget = Math.max(0, A.beat * 7.0 + resp(A.level) * 2.4 - 1.6);
   clusterR += (clTarget - clusterR) *
               (1 - Math.exp(-dt / (clTarget > clusterR ? 0.10 : 0.70)));
