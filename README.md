@@ -483,6 +483,39 @@ when switching away from a shader look. Its backing store is capped at 760px on 
 elsewhere; these are fragment-bound passes and nothing visible is gained by rendering them at full
 retina density.
 
+### Saving a still and a clip
+
+Both buttons capture the animation alone — the canvas, not the page, so no chip, label or menu
+appears in either file. A still is a PNG; a clip is twenty five seconds of mp4 where the browser
+offers it and webm where it does not. On a phone both go through `navigator.share`, because a blob
+download there either opens in a tab or goes nowhere, while the share sheet can save to the camera
+roll.
+
+**A still cannot be read from the click handler.** The shader canvas is created without
+`preserveDrawingBuffer`, so its pixels are gone the moment the frame is composited and anything
+reading it from a click gets an empty image. Turning that flag on would make every shader look pay
+for a second buffer on every frame to serve a button pressed once. So the click only raises a flag
+and the render loop reads the canvas immediately after drawing, while the buffer is still there —
+and for the same reason the read is `toDataURL`, not `toBlob`, which defers.
+
+**The live resolution is a frame-rate decision, and a capture has a different one to make.** Both
+canvases are deliberately capped for the live view: the 2D one at `devicePixelRatio` 2, the shader
+one at 760px wide on phones with a further per-look reduction for Blur and Fields. A still is one
+frame, so none of those caps buy anything — it renders at 2.5×, with the width cap and the per-look
+reduction both waived, which is what makes every look save at the same size (975×1750 from a phone,
+3600×2250 from a 1440×900 desktop). A clip pays its cost on all 750 of its frames, so it takes the
+gentler 1.6× and keeps both caps.
+
+Two things this arrangement has to get right. The resolution must be raised **before** the frame is
+drawn and lowered after, so the still is armed on one pass of the render loop and read at the end of
+the same one — the arm sits above the shader branch, the read below it. And a `MediaRecorder` fixes
+its frame size when `captureStream` is called, so the clip's scale goes up before the stream is
+taken, not after, and comes back down in `onstop`.
+
+**Safari caps a canvas by total area, not by side length**, at around 16.7M pixels, and a drawing
+buffer it refuses to allocate comes back blank rather than throwing. Both canvases therefore clamp
+themselves to 11M pixels after scaling, which nothing short of a 5K display reaches.
+
 ### Full screen
 
 iPhone Safari implements no Fullscreen API at all — only `<video>` elements can go fullscreen

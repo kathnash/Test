@@ -19,7 +19,7 @@
 const FX = {
   canvas: null, gl: null, prog: null, tex: null, texB: null, u: {}, ok: false,
   texAspect: 1, texBAspect: 1, hasTexB: 0, sized: [0, 0],
-  mode: 0, cssW: 0, cssH: 0,
+  mode: 0, cssW: 0, cssH: 0, captureScale: 1, captureFull: false,
 
   // Blur is a deep defocus: by construction it carries no detail above a few
   // pixels, so it does not need the backing store a look that resamples the
@@ -1188,13 +1188,31 @@ const FX = {
   // window, so it has to be recomputed when the mode changes and not only
   // when the window does. It early-outs on an unchanged size, so the common
   // case still costs nothing.
+  // Downloads render larger than the live view, so the cap below lifts for
+  // as long as a capture is running and drops straight back after. `full`
+  // additionally waives both the width cap and the per-look reduction. Both
+  // exist to hold a frame rate, and a still is one frame with no frame rate
+  // to hold; waiving them is what makes every look, shader or not, save at
+  // the same size. A clip is still paid for on every one of its frames, so it
+  // keeps them.
+  setCaptureScale(k, full) {
+    this.captureScale = k; this.captureFull = !!full; this._applySize();
+  },
+
   _applySize() {
     const w = this.cssW, h = this.cssH;
     if (!this.ok || !w || !h) return;
     // Capped: these are full-screen per-pixel passes and a phone does not
     // need them at native retina resolution to look right.
     const maxW = w <= 820 ? 760 : 1180;
-    const s = Math.min(1, maxW / Math.max(1, w)) * (this.MODE_SCALE[this.mode] || 1);
+    let s = this.captureFull
+          ? this.captureScale
+          : Math.min(1, maxW / Math.max(1, w))
+            * (this.MODE_SCALE[this.mode] || 1) * this.captureScale;
+    // Safari caps a canvas by total area rather than by side, and a drawing
+    // buffer it refuses to allocate comes back blank rather than throwing.
+    const area = w * h * s * s;
+    if (area > 11e6) s *= Math.sqrt(11e6 / area);
     const cw = Math.max(2, Math.round(w * s)), ch = Math.max(2, Math.round(h * s));
     if (this.sized[0] === cw && this.sized[1] === ch) return;
     this.canvas.width = cw; this.canvas.height = ch;

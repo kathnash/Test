@@ -486,7 +486,9 @@ function renderTiny() {
 }
 
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  DPR = Math.min(window.devicePixelRatio || 1, 2) * captureScale;
+  const area = window.innerWidth * window.innerHeight * DPR * DPR;
+  if (area > 11e6) DPR *= Math.sqrt(11e6 / area);
   W = window.innerWidth; H = window.innerHeight;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   g.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -1219,6 +1221,7 @@ function frame(now) {
   // smooth the underlying band is.
   rippleSwell += (swTarget - rippleSwell) *
                  (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.55 : 1.30)));
+  armStillIfAsked();
   if (LOOKS[look].fx) {
     drawFX(LOOKS[look]);
     takeStillIfAsked();
@@ -1245,14 +1248,14 @@ function frame(now) {
 // Called from inside the frame, after the draw and before the browser
 // composites, which is the only moment the shader canvas can be read.
 function takeStillIfAsked() {
-  if (!pendingStill) return;
-  pendingStill = false;
-  const btn = document.getElementById('shot');
+  if (!stillArmed) return;
+  stillArmed = false; pendingStill = false;
   try {
     deliver(stillFromCanvas(), LOOKS[look].name.toLowerCase() + '.png')
       .catch(() => {});
   } catch (e) { flash('Could not save the image.'); }
-  btn.textContent = STILL_LABEL;
+  setCaptureScale(1);
+  document.getElementById('shot').textContent = STILL_LABEL;
 }
 
 /* =====================================================================
@@ -1518,6 +1521,23 @@ addEventListener('pointerdown', e => {
    record a canvas nobody is drawing to. The style is held for the duration
    instead.
    ===================================================================== */
+/* Downloads render larger than the live view. Both canvases are capped for
+   what you are watching - a shader look at full retina on a phone costs more
+   than it is worth on screen - but a still is one frame and a clip is
+   something you keep, so both can afford more. The still scale is free,
+   being one frame; the video scale is paid on every frame for the whole
+   twenty five seconds, which is why it is the more conservative of the two. */
+const STILL_SCALE = 2.5;
+const VIDEO_SCALE = 1.6;
+let captureScale = 1;
+
+function setCaptureScale(k, full) {
+  captureScale = k;
+  resize();                       // the 2D canvas, via DPR
+  FX.setCaptureScale(k, full);    // and the shader one, via its own cap
+  FX.resize(W, H);
+}
+
 const RECORD_SECONDS = 25;
 // Kept as constants so the buttons and the code that restores them after a
 // capture cannot drift apart.
@@ -1534,7 +1554,15 @@ const recBtn = document.getElementById('rec');
    second buffer on every frame to serve a button pressed once. So the click
    raises a flag and the render loop reads the canvas immediately after
    drawing, while the buffer is still there. */
-let pendingStill = false;
+let pendingStill = false, stillArmed = false;
+
+// The resolution has to be raised before the frame is drawn, not after, so
+// the request is armed on one pass and read at the end of the same one.
+function armStillIfAsked() {
+  if (!pendingStill || stillArmed) return;
+  stillArmed = true;
+  setCaptureScale(STILL_SCALE, true);
+}
 
 function stillFromCanvas() {
   const target = LOOKS[look].fx ? document.getElementById('fxc') : cv;
@@ -1579,16 +1607,25 @@ function recordClip() {
     flash('This browser cannot record the canvas. Try Chrome, Edge or Safari.');
     return;
   }
+  // Raised before the stream is taken: a MediaRecorder fixes its frame size
+  // when captureStream is called, so resizing afterwards would either be
+  // ignored or break the clip.
+  setCaptureScale(VIDEO_SCALE);
   let rec;
   try {
     rec = new MediaRecorder(target.captureStream(30),
-                            { mimeType: mime, videoBitsPerSecond: 12000000 });
-  } catch (e) { flash('Could not start recording here.'); return; }
+                            { mimeType: mime, videoBitsPerSecond: 20000000 });
+  } catch (e) {
+    setCaptureScale(1);
+    flash('Could not start recording here.');
+    return;
+  }
 
   const chunks = [];
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.onstop = async () => {
     recording = false;
+    setCaptureScale(1);
     clearInterval(tick);
     recBtn.textContent = RECORD_LABEL;
     const ext = mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
