@@ -140,11 +140,21 @@ const FX = {
          rather than an event. Quieting the background does more for both
          calm and clarity than any change to the rings themselves. */
       float waterH(vec2 p, float t, float aspect){
-        float h  = sin(p.x * 5.4 + t * 0.62) * 0.28;
-              h += sin(p.y * 4.1 - t * 0.48) * 0.25;
-              h += sin((p.x + p.y) * 7.0 + t * 0.37) * 0.16;
-              h += sin(p.x * 11.0 - t * 0.55) * 0.06;
-              h += (fbm(p * 1.7 + t * 0.14) - 0.5) * 0.50;
+        /* Swelling water has longer waves, not merely deeper ones. Stretching
+           the whole field as the swell rises is what separates this from the
+           picture simply being distorted harder — the undulations grow, which
+           is what a swell looks like. Also the calmer reading: a longer wave
+           at the same height is a gentler slope, so the extra displacement
+           above arrives spread out rather than as sharper bending. */
+        // Applied to a copy, not to p itself: the surges below are positioned
+        // in p, and stretching the space they are measured in would slide
+        // every one of them sideways whenever the swell moved.
+        vec2 q = p / (1.0 + uSwell * 0.34);
+        float h  = sin(q.x * 5.4 + t * 0.62) * 0.28;
+              h += sin(q.y * 4.1 - t * 0.48) * 0.25;
+              h += sin((q.x + q.y) * 7.0 + t * 0.37) * 0.16;
+              h += sin(q.x * 11.0 - t * 0.55) * 0.06;
+              h += (fbm(q * 1.7 + t * 0.14) - 0.5) * 0.50;
 
         /* And the rings. Each is a wavefront that travels: the crest sits at
            a radius that grows with age, and the envelope travels with it.
@@ -200,7 +210,7 @@ const FX = {
                many rings alive - has to come out of the height of each or the
                water is simply half again as busy. Measured, leaving the
                height alone took mean motion from 6.8 to 17.4. */
-            float amp = uDropAmp[i] * (0.26 + size * 0.32)
+            float amp = uDropAmp[i] * (0.15 + size * 0.21)
                       / (1.0 + front * 2.0) * exp(-age * (0.36 - size * 0.15));
             // cos, not sin: it puts the crest on the wavefront itself, and at
             // the moment of the drop a single peak at the point of impact
@@ -338,20 +348,18 @@ const FX = {
           // fast rise moves every pixel of the image simultaneously — which
           // reads as a snap however smooth the underlying band is. Depth of
           // water should swell, not switch.
-          /* Nearly constant, and that is the point. This scales the entire
-             displacement field, so every term added here moves every pixel of
-             the image at the same instant — which is a flinch of the whole
-             frame, not a ripple, however well it is timed. Driving the hit
-             from here was the reason the reaction read as a distortion that
-             happened and then stopped rather than as something spreading
-             across water.
+          /* The swell is the effect, so it gets the range. This scales the
+             whole displacement field, which was the reason a *hit* could not
+             live here — a hit moves every pixel at one instant and reads as a
+             flinch. A swell is the one thing that should be here: it is the
+             water itself rising, it is supposed to be everywhere at once, and
+             it moves over seconds rather than instants.
 
-             The music makes rings instead. Those are local, they travel, and
-             they last for the better part of ten seconds. What is left here
-             is a slow swell of overall depth across a phrase, and a breath
-             across the bar, both far too slow to register as an event. */
-          float breath = 0.5 + 0.5 * cos(uBar * 6.28318);
-          float amt = 0.0130 + uSwell * 0.0125 + breath * uLevel * 0.0030;
+             Nearly five to one from quiet to loud, where it used to be less
+             than two. That ratio is the whole answer to a quiet passage
+             reacting as hard as a loud one — the previous base was so high
+             that silence already had most of the distortion of a chorus. */
+          float amt = 0.0068 + uSwell * 0.0275;
           vec2 off = grad * amt;
 
           // A puddle of the second picture, spreading with the music. Its
@@ -399,11 +407,11 @@ const FX = {
           // Caustic glint along the crests. h must be clamped before the
           // power: unnormalised it exceeded 1 and blew whole regions white.
           float cr = clamp(h * 0.5 + 0.5, 0.0, 1.0);
-          // The glint keeps a little of the fast beat. It is brightness, not
-          // geometry — nothing moves when it changes — so it can shimmer with
-          // the detail of the music without costing any of the calm the
-          // slower drivers above just bought.
-          col += pow(cr, 7.0) * (0.10 + uLevel * 0.14 + uPulse * 0.26 + uBeat * 0.05);
+          // On the swell too, rather than on beats. Nothing in this look is
+          // driven by the grid any more: a swell that brightens on the
+          // downbeat is a swell with a pulse in it, and the pulse was audible
+          // as being slightly off whenever the tracking was slightly off.
+          col += pow(cr, 7.0) * (0.08 + uLevel * 0.10 + uSwell * 0.32);
         }
 
         // ================================================================

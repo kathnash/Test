@@ -450,6 +450,49 @@ Note which way frequency moves with size: *down*. Steepness is frequency times h
 those roughly equal across the range is what stops a small ring from being a sharper distortion
 than a large one.
 
+### It is a swell, not a droplet
+
+All of the above optimised the wrong mechanism. "Quiet reacts too dramatically and loud doesn't
+react enough… it's not a ripple from a water droplet, it's a swelling of the water… if a note is
+held I want it to keep growing." Three separate faults, and the rings were the least of them.
+
+**Rings were the wrong subject.** The reactivity had been deliberately moved *out* of the global
+displacement and into travelling rings, because a hit applied globally reads as a flinch of the
+whole frame. That reasoning holds for a *hit* and is exactly backwards for a *swell*: a swell is
+the water itself rising, so it is supposed to be everywhere at once — it just has to move over
+seconds instead of instants. The global term carries the effect again, and the rings are demoted to
+supporting texture at a third of their previous height.
+
+**The engine compresses; a look about dynamics has to re-expand.** Bands are measured relative to
+their own recent behaviour precisely so quiet music still moves, and `resp()` lifts the bottom
+further. Both are right for a look that should twitch on any material and both are fatal here: the
+quiet end arrives already most of the way up. The swell instead tracks a slow floor and ceiling of
+the level and asks where the music sits *between them*, then squares it. Quiet ends near nothing,
+loud near everything, and the gap is the effect. Measured quiet-to-loud on-screen motion went from
+under 2x to **6.29x**. The sensitivity control moves the exponent rather than multiplying the
+result, so turning it up gives quiet material more room instead of clipping loud material.
+
+**An envelope follower cannot express "held".** It reaches its target and stops, so two seconds of
+a loud chord looked identical to the first instant of it. The swell adds an integrator alongside the
+follower: it accumulates while the level is above a floor and bleeds away below it. A brief stab
+peaks at **0.53**; the same loudness held for ten seconds climbs to **1.00** over about five, then
+ebbs over five more. That difference is the whole of what "hold that note" asked for.
+
+**A rise detector needs a band-pass, not a difference.** Surges fire on the music getting louder
+rather than on a beat, which needs the *change* in level — but the level wobbles on every beat, so
+comparing it against a slow average crosses the threshold four times a bar and puts the surges
+straight back on the beat they were moved off. Smoothing the fast side first (0.55s against 1.9s)
+leaves only changes that outlast a beat, which is what a crescendo is and what a snare is not. That
+one change took mean on-screen motion from 10.91 to **4.18**.
+
+**And a crescendo must not fire the whole way up.** The slow reference chases a big rise for
+several seconds, so a single swell spawned five surges in a bunch. Setting the reference to the
+level just reached means a long crescendo has to climb another step to earn the next one.
+
+Net against where Ripple started: mean on-screen motion **12.34 → 4.18**, its spread **0.485 →
+0.679**, and a dynamic range from quiet to loud of **6.29x**. Nothing in the look is driven by the
+beat grid any more.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
