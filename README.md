@@ -493,6 +493,39 @@ Net against where Ripple started: mean on-screen motion **12.34 → 4.18**, its 
 0.679**, and a dynamic range from quiet to loud of **6.29x**. Nothing in the look is driven by the
 beat grid any more.
 
+### Light is free; movement is not
+
+With the swell right, the beats had gone missing — nothing in the look answered at beat rate at all.
+Putting them back without undoing the calm came down to one distinction that generalises past this
+look: **a highlight that brightens moves nothing.** Frantic was never about how *often* something
+responded, it was about how much geometry moved when it did.
+
+Two beat-rate responses were added and then traded against each other, measured by freezing the
+scene and toggling the beat between 0 and 1:
+
+| | mean motion | brightness lift on a beat |
+|---|---|---|
+| no beat response | 4.18 | — |
+| tremble-weighted | 8.37 | 6.54 |
+| glint-weighted | **7.21** | **10.58** |
+
+Shifting weight from the surface tremble to the caustic glint bought *more* visible beat for *less*
+movement, which is the whole lesson. The tremble that remains is deliberately high spatial frequency
+and a twentieth of the swell's amplitude — it stirs surface texture and leaves large forms alone,
+where the frantic versions were scaling the entire displacement field and lurching every big shape
+in the picture at once.
+
+**The glint had silently gone out, which is why brightening it did nothing at first.** It maps
+height onto 0..1 as `h * 0.5 + 0.5` and then raises that to the seventh power — written when the
+standing swell ran to about 1.0. Halving that field to make the surges legible left crests reaching
+only 0.72, and 0.72<sup>7</sup> is a tenth of 1.0. Rescaling the map *and* opening the exponent from
+7 to 4.5 was needed: at the seventh power the glint lived on perhaps a twentieth of the surface, so
+making it brighter made almost nothing brighter.
+
+**The beat term rides the swell rather than standing alone.** A beat that hits equally hard in a
+quiet passage and a loud one is the same imbalance the swell was rebuilt to fix, arriving by the
+back door. Measured lift is 5.3 levels when quiet and 10.6 when loud.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It

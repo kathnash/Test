@@ -156,6 +156,19 @@ const FX = {
               h += sin(q.x * 11.0 - t * 0.55) * 0.06;
               h += (fbm(q * 1.7 + t * 0.14) - 0.5) * 0.50;
 
+        /* A fine tremble on the beat, the way a surface answers a speaker
+           under it. Beat-rate motion is what made this frantic before, but
+           what was frantic about it was the *scale*: the beat was scaling the
+           whole displacement field, so every large feature in the picture
+           lurched at once. This is the opposite — high spatial frequency and
+           a tenth of the amplitude, so it stirs the surface texture and
+           leaves the large forms to the swell. Cross-hatched rather than a
+           single direction, which reads as a surface shivering rather than as
+           a wave crossing. On uTime, not the swell's phase, because it should
+           shiver at its own rate rather than at the pace of the water. */
+        h += sin(q.x * 19.0 + uTime * 2.3) * sin(q.y * 16.0 - uTime * 1.9)
+           * uBeat * 0.028;
+
         /* And the rings. Each is a wavefront that travels: the crest sits at
            a radius that grows with age, and the envelope travels with it.
 
@@ -406,12 +419,35 @@ const FX = {
 
           // Caustic glint along the crests. h must be clamped before the
           // power: unnormalised it exceeded 1 and blew whole regions white.
-          float cr = clamp(h * 0.5 + 0.5, 0.0, 1.0);
-          // On the swell too, rather than on beats. Nothing in this look is
-          // driven by the grid any more: a swell that brightens on the
-          // downbeat is a swell with a pulse in it, and the pulse was audible
-          // as being slightly off whenever the tracking was slightly off.
-          col += pow(cr, 7.0) * (0.08 + uLevel * 0.10 + uSwell * 0.32);
+          /* Rescaled, and it had to be. This maps the height onto 0..1 for
+             the power below, and it was written when the standing swell ran
+             to about 1.0 — halving that field to make the surges legible left
+             the crests reaching only 0.72, and 0.72 to the seventh is a tenth
+             of 1.0. The glint had quietly gone out, which is why adding the
+             beat to it changed nothing. */
+          float cr = clamp(h * 1.15 + 0.5, 0.0, 1.0);
+          /* The glint is where the beat lives. It rides pow(cr, 7.0), so it
+             only exists on the crests — a sparkle running along the tops of
+             the waves rather than a change to the whole frame.
+
+             This is the one place beat-rate response is free. Nothing moves
+             when a highlight brightens, so it costs none of the calm the
+             swell just bought; the earlier versions were frantic because the
+             beat was moving geometry. On uBeat rather than the grid's pulse,
+             so it answers every beat there is and cannot be off. */
+          /* Exponent down from 7 as well as the beat term up. At the
+             seventh power the glint existed on perhaps a twentieth of the
+             surface, so making it brighter made almost nothing brighter;
+             opening it out is what turns a sparkle on a few crest tips into
+             light running along the tops of the waves.
+
+             The beat term rides the swell rather than standing alone, so a
+             beat in a quiet passage is a small catch of light and the same
+             beat in a loud one is the water flashing. A beat that hits just
+             as hard either way is the same imbalance the swell was rebuilt to
+             fix, arriving by the back door. */
+          col += pow(cr, 4.5) * (0.05 + uLevel * 0.07 + uSwell * 0.20
+                              + uBeat * (0.40 + uSwell * 0.85));
         }
 
         // ================================================================
