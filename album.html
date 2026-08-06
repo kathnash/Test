@@ -630,16 +630,36 @@ const bandVal = i => [A.bass, A.mid, A.high, A.air, A.level][i] || 0;
 let drops = [], lastDrop = -9;
 function updateDrops(dt) {
   for (const d of drops) d.age += dt;
-  drops = drops.filter(d => d.age < 6);
-  // One ring per bar, on the downbeat. It was one per beat, which at 120bpm
-  // is four rings a bar — and since each is legible for the best part of a
-  // second, the surface was never once at rest for the eye to read a ring
-  // against. A single ring that lands on the beat you would count is more
-  // clearly synchronised than four that blur into a texture, and there is a
-  // calm surface either side of it to make it visible.
-  if (A.pulseFlash > 0.9 && time - lastDrop > 0.30) {
+  drops = drops.filter(d => d.age < 9);
+  /* A ring is born from a sound and then belongs to the water rather than to
+     the music: it spreads for the better part of ten seconds whatever happens
+     next. So these are spaced rather than counted — on the downbeat where
+     there is a grid to follow, on any strong onset where there is not, and no
+     more than one every 1.2s either way. Four are alive at once, which is
+     enough for them to overlap and not so many that the surface never rests.
+
+     Where they land was wrong, and wrong in a way that hid the effect. x was
+     drawn from 0.15..1.35 in the shader's aspect-corrected space, which fits
+     a landscape frame — on a portrait phone only 0..0.56 is on screen, so two
+     rings in three were born outside the frame and arrived as a vague swell
+     from off the edge instead of as a ripple. These are plain uv now, and the
+     shader scales them. */
+  const asked = A.lock > 0.25 ? A.pulseFlash > 0.9 : A.beatFlash > 0.9;
+  // 1.7s, not 1.2s. Only four rings fit in the shader, so the spacing is what
+  // decides how far back the oldest one can be before it is evicted: at 1.2s
+  // the surface only ever remembered the last five seconds, which threw rings
+  // away while they were still crossing the frame.
+  if (asked && time - lastDrop > 1.70) {
     lastDrop = time;
-    drops.push({ x: 0.15 + Math.random() * 1.2, y: Math.random(), age: 0 });
+    drops.push({
+      x: 0.14 + Math.random() * 0.72,
+      y: 0.14 + Math.random() * 0.72,
+      age: 0,
+      // How big a ripple this sound makes. The reactivity lives here now,
+      // where it is one local event, rather than in the depth of the whole
+      // field, where it was every pixel at once.
+      s: 0.50 + Math.min(0.55, resp(A.level) * 0.34 + A.pulse * 0.30)
+    });
     if (drops.length > 4) drops.shift();
   }
 }
@@ -1159,7 +1179,10 @@ function frame(now) {
   // to lift — the surges were 250ms apart and ran into each other. Once per
   // bar there is room for the surge to finish, so it can be half as large
   // again and still leave the water calm between hits.
-  ripplePhase += dt * (0.20 + resp(A.level) * 0.10 + A.pulse * A.pulse * 2.30);
+  // The rate the standing swell drifts at. Almost flat now: this speeds up
+  // the whole surface at once, and a surface that speeds up on every hit is
+  // the other half of what read as frantic. The music is in the rings.
+  ripplePhase += dt * (0.15 + resp(A.level) * 0.06 + A.pulse * A.pulse * 0.40);
   // Roughly a dot every 4s at rest, several a second when it is loud. Each
   // dot is offset within this by its own seed, so they take turns.
   // Weighted hard toward the music: at rest the field is close to still, and
@@ -1226,8 +1249,11 @@ function frame(now) {
   // scales the entire displacement field, so when it moves every pixel of the
   // image moves at once — it has to glide, or it reads as a snap however
   // smooth the underlying band is.
+  // Slower on both sides than it was. With the hit moved into the rings this
+  // is the only thing left that changes the depth of the whole field, so it
+  // should read as the tide coming in over a passage, not as a response.
   rippleSwell += (swTarget - rippleSwell) *
-                 (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.55 : 1.30)));
+                 (1 - Math.exp(-dt / (swTarget > rippleSwell ? 0.95 : 2.20)));
   armStillIfAsked();
   if (LOOKS[look].fx) {
     drawFX(LOOKS[look]);

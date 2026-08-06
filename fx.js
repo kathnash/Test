@@ -70,7 +70,7 @@ const FX = {
       // continuous, tempo-locked ramp to ride.
       uniform float uPulse, uBar;
       uniform vec3  uPal[5];
-      uniform vec4  uDrops[4];     // x, y, age(sec), active
+      uniform vec4  uDrops[4];     // x, y (uv), age(sec), strength
       uniform float uHasTex;
       // Second picture, for the looks that composite two sources.
       uniform float uShuffle;  // integrated, not uTime * rate
@@ -128,17 +128,65 @@ const FX = {
       // maths stays in a predictable range. Written once and sampled three
       // times for the gradient — duplicating the expression inline is how
       // the terms drift out of sync.
-      float waterH(vec2 p, float t){
-        float h  = sin(p.x * 7.0 + t * 1.10) * 0.50;
-              h += sin(p.y * 5.3 - t * 0.85) * 0.45;
-              h += sin((p.x + p.y) * 9.4 + t * 0.65) * 0.30;
-              h += sin(p.x * 17.0 - t * 1.7) * 0.16;
-              h += (fbm(p * 2.1 + t * 0.25) - 0.5) * 0.90;
+      /* The still surface: a slow swell, deliberately long in both space and
+         time. The fastest term used to run at 1.7 and the finest at 17 cycles
+         across the frame, which together read as chop rather than as a swell
+         — small fast detail is what makes water look agitated. */
+      /* Halved, and that is what makes the rings readable. A ring is only
+         legible against water calmer than itself: at full height the standing
+         swell was some five times the amplitude of a ring, so a ripple
+         crossing it was a small perturbation of an already busy surface
+         rather than an event. Quieting the background does more for both
+         calm and clarity than any change to the rings themselves. */
+      float waterH(vec2 p, float t, float aspect){
+        float h  = sin(p.x * 5.4 + t * 0.62) * 0.28;
+              h += sin(p.y * 4.1 - t * 0.48) * 0.25;
+              h += sin((p.x + p.y) * 7.0 + t * 0.37) * 0.16;
+              h += sin(p.x * 11.0 - t * 0.55) * 0.06;
+              h += (fbm(p * 1.7 + t * 0.14) - 0.5) * 0.50;
+
+        /* And the rings. Each is a wavefront that travels: the crest sits at
+           a radius that grows with age, and the envelope travels with it.
+
+           This is the whole difference between a ripple and a flicker. The
+           envelope used to be exp(-d) about the drop's centre, so the entire
+           concentric pattern existed everywhere from the first frame and then
+           faded in place — nothing ever moved outward, and since it was gone
+           inside a second, what you saw was a brief shimmer at a point rather
+           than a ring crossing the water. Anchoring the envelope to the front
+           instead is what makes it spread.
+
+           Slow on purpose, and the speed is set by the frame rather than by
+           taste. A portrait phone is only about 0.56 units wide in this
+           space, so a ring from the middle reaches the near edge at 0.28 and
+           the far corner at 0.58 — at 0.24 units a second it was gone in two
+           and a half, which looks exactly like a disturbance that happens and
+           then stops. At 0.11 it spends five or six seconds crossing, which
+           is the pace this is supposed to have. */
         for (int i = 0; i < 4; i++){
-          if (uDrops[i].w > 0.5){
-            float d = distance(p, uDrops[i].xy);
+          if (uDrops[i].w > 0.01){
+            vec2 c = vec2(uDrops[i].x * aspect, uDrops[i].y);
+            float d = distance(p, c);
             float age = uDrops[i].z;
-            h += sin(d * 20.0 - age * 7.0) * exp(-d * 2.4) * exp(-age * 2.2) * 0.52;
+            float front = age * 0.11;
+            // Squared explicitly. pow() of a negative base is undefined in
+            // GLSL, and d - front is negative everywhere inside the ring.
+            float u = (d - front) * 3.4;
+            float band = exp(-u * u);
+            // Energy spread around a growing circumference, then a long fade.
+            float amp = uDrops[i].w * 0.95 / (1.0 + front * 2.0) * exp(-age * 0.22);
+            /* Long wavelength and modest amplitude, and the two are the same
+               decision. What is displaced is the gradient of this, so the
+               steepness of a ring is its frequency times its height, not its
+               height — at 24 cycles and full height the crest was fifteen
+               times steeper than the whole standing swell put together, which
+               is a lens sweeping over the picture rather than a ripple. A
+               broad, shallow ring is both gentler and more like slow water.
+
+               cos, not sin: it puts the crest on the wavefront itself, and at
+               the moment of the drop a single peak at the point of impact
+               rather than a node there. */
+            h += cos((d - front) * 15.0) * band * amp * smoothstep(0.0, 0.40, age);
           }
         }
         return h / 2.2;
@@ -254,10 +302,11 @@ const FX = {
           float t = uPhase;
           vec2 p = uv * vec2(uRes.x / max(uRes.y,1.0), 1.0);
 
+          float ar0 = uRes.x / max(uRes.y, 1.0);
           float e  = 0.004;
-          float h  = waterH(p, t);
-          float hx = waterH(p + vec2(e, 0.0), t) - h;
-          float hy = waterH(p + vec2(0.0, e), t) - h;
+          float h  = waterH(p, t, ar0);
+          float hx = waterH(p + vec2(e, 0.0), t, ar0) - h;
+          float hy = waterH(p + vec2(0.0, e), t, ar0) - h;
           vec2  grad = vec2(hx, hy) / e;
 
           // Small on purpose. The gradient of a sum of sines runs to ~4, so
@@ -269,22 +318,20 @@ const FX = {
           // fast rise moves every pixel of the image simultaneously — which
           // reads as a snap however smooth the underlying band is. Depth of
           // water should swell, not switch.
-          // Three timescales, and it needs all three. The swell carries depth
-          // over a phrase. The breath rides the bar, so between hits the
-          // water is still moving with the music rather than merely settling
-          // — it arrives with the downbeat and recedes across the bar, which
-          // is what makes the surface feel like it is flowing along with the
-          // song. The pulse carries the hit itself.
-          //
-          // The hit used to be uBeat, which fires on every onset there is:
-          // at 120bpm that is a surge every quarter second, and a surge that
-          // never finishes before the next one starts is not a pulse, it is
-          // a churn. That is what read as frantic. One surge per bar is
-          // eight times rarer, so it can be almost twice as large and still
-          // leave the water calm in between.
+          /* Nearly constant, and that is the point. This scales the entire
+             displacement field, so every term added here moves every pixel of
+             the image at the same instant — which is a flinch of the whole
+             frame, not a ripple, however well it is timed. Driving the hit
+             from here was the reason the reaction read as a distortion that
+             happened and then stopped rather than as something spreading
+             across water.
+
+             The music makes rings instead. Those are local, they travel, and
+             they last for the better part of ten seconds. What is left here
+             is a slow swell of overall depth across a phrase, and a breath
+             across the bar, both far too slow to register as an event. */
           float breath = 0.5 + 0.5 * cos(uBar * 6.28318);
-          float amt = 0.0100 + uSwell * 0.0150
-                    + breath * uLevel * 0.0042 + uPulse * 0.0145;
+          float amt = 0.0130 + uSwell * 0.0125 + breath * uLevel * 0.0030;
           vec2 off = grad * amt;
 
           // A puddle of the second picture, spreading with the music. Its
@@ -336,7 +383,7 @@ const FX = {
           // geometry — nothing moves when it changes — so it can shimmer with
           // the detail of the music without costing any of the calm the
           // slower drivers above just bought.
-          col += pow(cr, 7.0) * (0.10 + uLevel * 0.14 + uPulse * 0.34 + uBeat * 0.09);
+          col += pow(cr, 7.0) * (0.10 + uLevel * 0.14 + uPulse * 0.26 + uBeat * 0.05);
         }
 
         // ================================================================
@@ -434,8 +481,8 @@ const FX = {
           float density = fbm(uv * vec2(ar, 1.0) * 1.4 + 3.0);
           float swell = 0.0;
           for (int i = 0; i < 4; i++){
-            if (uDrops[i].w > 0.5){
-              float d = length(uv - vec2(uDrops[i].x / 1.6, uDrops[i].y));
+            if (uDrops[i].w > 0.01){
+              float d = length(uv - uDrops[i].xy);
               swell += exp(-d * 3.0) * exp(-uDrops[i].z * 1.1) * 0.40;
             }
           }
@@ -650,8 +697,8 @@ const FX = {
           // Developer spreading from each transient.
           float dev = 0.0;
           for (int i = 0; i < 4; i++){
-            if (uDrops[i].w > 0.5){
-              float d = distance(uv, vec2(uDrops[i].x / 1.6, uDrops[i].y));
+            if (uDrops[i].w > 0.01){
+              float d = distance(uv, uDrops[i].xy);
               float age = uDrops[i].z;
               dev += exp(-abs(d - age * 0.26) * 6.5) * exp(-age * 1.15);
             }
@@ -1343,7 +1390,8 @@ const FX = {
     const drops = new Float32Array(16);
     for (let i = 0; i < 4; i++) {
       const d = p.drops[i];
-      if (d) { drops[i*4] = d.x; drops[i*4+1] = d.y; drops[i*4+2] = d.age; drops[i*4+3] = 1; }
+      if (d) { drops[i*4] = d.x; drops[i*4+1] = d.y; drops[i*4+2] = d.age;
+               drops[i*4+3] = d.s == null ? 1 : d.s; }
     }
     gl.uniform4fv(this.u.uDrops, drops);
 

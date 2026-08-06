@@ -376,6 +376,51 @@ now launch 12 rings rather than 49.
 Net, on the same clip: on-screen change per frame **mean 6.11 → 3.22, peak 6.85 → 3.61**, and the
 worst per-frame step in the depth envelope 0.0384 → 0.0131.
 
+### Ripple was never actually rippling
+
+All of the above was tuning, and it kept not being enough: "the distortion happens in a quick
+moment and then it stops, and moves on to the next one." That is not a description of a badly tuned
+ripple. It is a description of something that is not a ripple at all, and it was right — three
+structural faults, none of them reachable by adjusting a constant.
+
+**The rings did not travel.** A drop's envelope was `exp(-d * 2.4)` about its own centre, so the
+whole concentric pattern existed everywhere from its first frame and then faded in place. Nothing
+ever moved outward. Combined with `exp(-age * 2.2)`, which is ninety percent gone in a second, what
+you saw was a brief shimmer at a point. A wavefront needs its envelope anchored to the *front* —
+`exp(-((d - age*speed) * k)²)` — so the band travels and the water inside it goes quiet behind it.
+
+**Sound scaled the whole displacement field.** Every reactive term went into `amt`, which multiplies
+the entire gradient, so a hit moved every pixel of the frame at the same instant. That is a flinch
+of the whole image, and no amount of timing makes a flinch read as a ripple. The music now *launches
+rings*, which are local, travel, and outlive the sound that made them by seconds. `amt` carries only
+a phrase-scale swell and a bar-scale breath, both far too slow to register as an event.
+
+**Two rings in three were born off-screen.** Drop x was drawn from `0.15..1.35` in the shader's
+aspect-corrected space, which suits a landscape frame — a portrait phone is only `0..0.56` wide, so
+most rings were born outside the picture and arrived as a vague swell from off the edge. They are
+plain uv now, scaled by the shader. Poster's swell and Cyanotype's developer read the same uniform
+and had a hard-coded `/1.6` for the same reason; both are fixed.
+
+Three things worth keeping from the retuning that followed:
+
+- **Speed is set by the frame, not by taste.** A ring from the centre of a portrait phone reaches
+  the near edge at 0.28 units and the far corner at 0.58. At 0.24 units/sec it is gone in two and a
+  half seconds, which looks like stopping. At 0.11 it spends five or six seconds crossing.
+- **Steepness is frequency times height, not height.** What gets displaced is the *gradient*, so a
+  ring at 24 cycles and full amplitude was fifteen times steeper than the entire standing swell — a
+  lens sweeping over the picture. Broad and shallow (15 cycles, a third the height) is both gentler
+  and more like slow water. Raising the amplitude without dropping the frequency took mean on-screen
+  motion from 8.1 to **21.8**, worse than where it started.
+- **A ring is only legible against water calmer than itself.** The standing swell was some five
+  times a ring's amplitude, so a ripple crossing it perturbed an already busy surface instead of
+  being an event. Halving the background did more for both calm *and* clarity than anything done to
+  the rings.
+
+Net: mean on-screen motion **12.34 → 6.84** with its spread up **0.485 → 0.688** — a little under
+half the movement, and much more of what remains arriving as events rather than as churn. A single
+ring, measured against a frozen surface, now has its crest at r = 0.07, 0.11, 0.25, 0.29 at one, two,
+three and four seconds, and is still legible at five.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
