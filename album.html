@@ -631,12 +631,13 @@ let drops = [], lastDrop = -9;
 function updateDrops(dt) {
   for (const d of drops) d.age += dt;
   drops = drops.filter(d => d.age < 6);
-  // A ring on most beats, where before it was one per 1.15s and most beats
-  // produced nothing at all. What made this frantic originally was not the
-  // count but the decay: four ring trains overlapping for seconds each, so
-  // the surface never settled. The rings now fade in well under a second, so
-  // one or two are legible at a time and each still lands on its beat.
-  if (A.beatFlash > 0.9 && time - lastDrop > 0.30) {
+  // One ring per bar, on the downbeat. It was one per beat, which at 120bpm
+  // is four rings a bar — and since each is legible for the best part of a
+  // second, the surface was never once at rest for the eye to read a ring
+  // against. A single ring that lands on the beat you would count is more
+  // clearly synchronised than four that blur into a texture, and there is a
+  // calm surface either side of it to make it visible.
+  if (A.pulseFlash > 0.9 && time - lastDrop > 0.30) {
     lastDrop = time;
     drops.push({ x: 0.15 + Math.random() * 1.2, y: Math.random(), age: 0 });
     if (drops.length > 4) drops.shift();
@@ -917,7 +918,7 @@ function drawFX(cfg) {
     lumLoB: LAYER2.lumLo, lumHiB: LAYER2.lumHi, medianNormB: LAYER2.medianNorm,
     mode: FX.MODES[cfg.fx],
     bass: resp(A.bass), mid: resp(A.mid), high: resp(A.high),
-    level: resp(A.level), beat: A.beat,
+    level: resp(A.level), beat: A.beat, pulse: A.pulse, bar: A.bar,
     palette: ART.palette.length ? ART.palette : [[120,120,140]],
     drops
   });
@@ -1152,10 +1153,13 @@ function frame(now) {
   // rather than a fast churn that never stops - frantic came from continuous
   // motion, and sync comes from discrete events.
   // Squared, so the surge concentrates into the hit instead of spreading
-  // across the gap. At 120bpm the beat envelope has not returned to zero
-  // before the next one arrives, so a linear term lifts the whole interval
-  // and reads as everything moving faster rather than as a pulse.
-  ripplePhase += dt * (0.20 + resp(A.level) * 0.10 + A.beat * A.beat * 1.55);
+  // across the gap. On the downbeat rather than on every onset: the squaring
+  // was an attempt to stop a beat term from lifting the whole interval, and
+  // it helped, but the real problem was that at 120bpm there is no interval
+  // to lift — the surges were 250ms apart and ran into each other. Once per
+  // bar there is room for the surge to finish, so it can be half as large
+  // again and still leave the water calm between hits.
+  ripplePhase += dt * (0.20 + resp(A.level) * 0.10 + A.pulse * A.pulse * 2.30);
   // Roughly a dot every 4s at rest, several a second when it is loud. Each
   // dot is offset within this by its own seed, so they take turns.
   // Weighted hard toward the music: at rest the field is close to still, and
@@ -1168,7 +1172,10 @@ function frame(now) {
   // transient lands as a burst rather than lifting the whole interval.
   shufflePhase += dt * (Math.max(0, resp(A.level) - 0.30) * 0.55 +
                         A.beat * A.beat * 3.20);
-  morphPhase += dt * (0.11 + resp(A.level) * 0.81 + A.beat * A.beat * 1.70);
+  // Fields' outlines. Same change as Ripple's, for the same reason: the
+  // shapes were being asked to answer something every quarter second, which
+  // no amount of smoothing turns into a breath.
+  morphPhase += dt * (0.11 + resp(A.level) * 0.81 + A.pulse * A.pulse * 2.40);
   // Above a floor only, and the beat term is cubed so a weak transient counts
   // for almost nothing while a strong one carries the swap. Below the floor
   // this does not advance at all. Both are needed: with thirty circles on

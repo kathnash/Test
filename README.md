@@ -713,11 +713,97 @@ approach.
 
 All analysis is on-device. Nothing is uploaded, recorded, or persisted.
 
+### The beat grid, and why every beat is the wrong beat
+
+`beat` fires on every onset there is — kick, snare, hat, plucked note, vocal entry. That is the
+right signal for a shimmer and the wrong one for a movement. At 120bpm it fires every 250ms, and
+anything sized by it is therefore always mid-response: the surge from one onset has not finished
+before the next arrives. No amount of smoothing fixes that, because the problem is the rate, not
+the shape. It is what read as frantic in Ripple, and as trembling rather than breathing in Fields.
+
+Music is counted in bars, and the first beat of a bar carries the weight. `pulse` fires on that
+one — roughly four times rarer, which is what gives a response room to complete and leaves calm
+either side of it to make the response legible. `bar` runs 0..1 across the bar for anything that
+should flow continuously in time rather than react in events.
+
+Three questions, each depending on the one before, re-solved twice a second:
+
+1. **How fast.** Autocorrelate the onset envelope; the lag that best matches is the beat period.
+   Candidates are reinforced by their own multiples, or the tracker latches onto a subdivision —
+   a hat on every eighth correlates as strongly at half the beat as at the beat, and without this
+   we are back to something firing every quarter second.
+2. **Where.** Fold the envelope onto one period; the phase carrying the most onset energy is
+   where the beats are. Solved directly rather than by steering a phase-locked loop, so a tempo
+   change costs one re-solve instead of a slow re-acquisition.
+3. **Which one is strong.** Keep a running average of accent per position for bars of 2, 3 and 4;
+   take the grouping whose average is most sharply peaked. Its peak is the downbeat.
+
+**The two questions want different evidence.** Tempo runs on broadband flux, so it works on
+material with no drums. Phase weights the low band 2.2x, because on anything with a kick the beat
+*is* a low-frequency event — and a track with a note on every eighth has identical broadband onset
+energy at every phase, so folding the broadband envelope gives a tie and the phase comes down to a
+coin flip. Measured, that put the downbeat between the kicks as often as on them. With the low
+band weighted it carries **1.43x** the kick energy of an ordinary beat.
+
+**Accent is integrated over the front of each beat, not peaked over all of it.** A kick lands on
+the beat; noise lands anywhere. A peak over the whole window scores every beat alike as soon as
+the signal is at all twitchy — measured, it put the downbeat on the kick 1.03x as often as
+chance, which is to say not at all. Where the energy falls within the beat is the entire
+distinction.
+
+**Confidence is not optional.** Autocorrelation always names a winner, and on smooth material the
+winner is noise — on a synthetic ambient pad it reported 149bpm at half confidence, a metronome
+invented out of nothing. Three gates, multiplied:
+
+- How far the winning lag stands above the field of candidates.
+- **Crest of the onset envelope.** Music with a pulse concentrates its onsets: most of the
+  envelope sits near zero and the beats stand above it. Ambient spreads energy evenly. Largest
+  bucket over average bucket measured 19.9 on the demo against 7.4 on the pad, which separates
+  them cleanly.
+- **How evenly the sampler is actually running** (below).
+
+Below the threshold the grid is not used at all: `pulse` falls back to firing on unusually strong
+onsets, no more than one every 1.2s, and `bar` drifts on a nominal cycle. Both looks keep their
+continuous, level-scaled motion, so beatless music still moves — it just is not told a tempo that
+is not there.
+
+### Audio analysis does not belong on the render loop
+
+The grid has its own `AnalyserNode` and its own 50Hz timer, and both halves matter.
+
+**Its own timer**, because the render loop is not a clock. Every other value here is sampled once
+per frame, which is fine for something a look reads once per frame. But tempo is measured by
+correlating a signal against a delayed copy of itself, so sampling that signal at the frame rate
+measures the frame rate too. On a look running at 6fps the tracker locked, confidently, to 151bpm
+on a 120bpm track. A related version of the same bug: flux dumped into the first bucket of the
+span a frame covered, rather than spread across all of them, leaves a run of empty buckets after
+each full one — an impulse train at exactly the frame rate. Spreading leaves a slow frame rate
+merely blurred, which costs precision but invents nothing.
+
+A timer is only independent while the main thread is free to run it, and a long enough frame
+blocks that too. So the sampler watches its own interval and feeds it into confidence: a device
+that cannot sample the audio evenly falls back rather than locking to its own frame rate.
+
+**Its own analyser**, because `smoothingTimeConstant` is applied per read — sharing one node and
+reading it twice as often quietly halves the smoothing that every existing look depends on. The
+grid's is also smoothed far less (0.35 against 0.84), since blurring is exactly wrong for finding
+the moment something starts.
+
+**Measured, on Ripple and Fields.** Motion during a downbeat against motion between downbeats went
+from roughly parity to **2.6x**. Mean frame-to-frame motion fell 34% and 23%, while its spread rose
+38% and 52% — less constant movement, arriving in larger and more distinct events, which is the
+shape of the difference between frantic and synchronised.
+
 ## Extending it
 
 `audio.js` exposes a single global `A`. A new visual is a function that reads `A.bass`, `A.mid`,
 `A.high`, `A.air`, `A.level`, `A.beat`, `A.centroid`, `A.bpm`, and `A.freq` — plus an entry in
 the `MODES` array in `index.html` or the `LOOKS` list in `album.html`. Nothing else changes.
+
+For anything that should move *with* the music rather than twitch at it, prefer the grid:
+`A.pulse` and `A.pulseFlash` on the downbeat, `A.bar` for continuous position through the bar,
+with `A.tempo`, `A.group`, `A.beatPhase` and `A.lock` alongside. Ripple and Fields are wired to
+these; every other look still runs on `A.beat`, and both signals are always available.
 
 In `album.html`, `TINY_W` (currently 7) is the single knob for how abstract the result is. Raise
 it and the cover becomes more legible; lower it and you get pure colour fields.

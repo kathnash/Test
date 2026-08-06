@@ -18,12 +18,40 @@ const A = {
   bpm: 0,
   ready: false, silentFor: 0,
 
+  /* The beat grid. `beat` above fires on every onset there is — every kick,
+     snare, hat and plucked note — which at 120bpm is something every quarter
+     second. Anything driven by it moves constantly, and constant movement is
+     what reads as frantic no matter how smooth each individual step is.
+
+     Music is counted in bars, and the first beat of a bar is the one that
+     carries the weight. These track that instead: the tempo, where the beats
+     fall, how many of them make a bar, and which one is the strong one. */
+  tempo: 0,               // bpm of the tracked pulse, 0 until locked
+  lock: 0,                // 0..1 confidence in the grid below
+  group: 4,               // beats per bar, as detected
+  beatPhase: 0,           // 0..1 through the current beat
+  bar: 0,                 // 0..1 through the current bar, wraps at the downbeat
+  pulse: 0,               // followed envelope, fires on downbeats only
+  pulseFlash: 0,          // instantaneous downbeat trigger
+
   _hist: [], _lastBeat: 0, _beatTimes: [],
   _peak: { bass:.01, mid:.01, high:.01, air:.01, level:.01 },
   _stat: { bass:{mu:0,sd:.02}, mid:{mu:0,sd:.02}, high:{mu:0,sd:.02},
            air:{mu:0,sd:.02}, level:{mu:0,sd:.02} },
   _prevSpec: null, _fluxHist: [], _beatRaw: 0,
+  gridAnalyser: null, _sampler: null, _gridSpec: null, _prevGrid: null,
+  _gridHz: 0, _gridT: 0, _gMu: 0, _gSd: 0.002, _sdt: 0.02,
   _floor: 0.002,          // learned noise floor, see update()
+  _t: 0,                  // seconds since start, from dt rather than a clock
+  // Onset envelope at a fixed 25ms rate, ten seconds of it. Fixed rate
+  // matters: requestAnimationFrame is not a clock, and an autocorrelation
+  // over frames measures the frame rate as much as it measures the music.
+  _oe: new Float32Array(400), _oeLo: new Float32Array(400),
+  _oeHead: 0, _oeFill: 0, _oeAcc: 0, _oeLoAcc: 0, _oeT: 0,
+  _acX: null, _acS: null, _trackT: 0,
+  _period: 0.5, _nextBeat: 0, _beatIdx: 0, _accent: 0,
+  _slots: [new Float32Array(2), new Float32Array(3), new Float32Array(4)],
+  _off: 0, _pulseRaw: 0, _sinceP: 0,
   // Envelope shaping. Attack keeps transients legible, release stops the
   // fall from flickering, and the second glide stage removes the velocity
   // kink where the follower switches between the two.
@@ -89,7 +117,89 @@ const A = {
     }
 
     node.connect(this.analyser);
+
+    /* The grid gets its own analyser and its own timer, and both halves of
+       that matter.
+
+       Its own timer, because the render loop is not a clock. Everything else
+       here is sampled once per frame, which is fine for a value a look reads
+       once per frame — but tempo is measured by correlating a signal against
+       a delayed copy of itself, and sampling that signal at the frame rate
+       measures the frame rate too. On a heavy look running at 6fps the
+       tracker locked, confidently, to 151bpm on a 120bpm track. A timer runs
+       at its own rate whether or not the GPU is keeping up.
+
+       Its own analyser, because sharing one would change the smoothing that
+       every existing look depends on: the smoothing constant is applied per
+       read, so reading the same node twice as often quietly halves it. This
+       one is also smoothed much less, since blurring is exactly wrong for
+       finding the moment something starts. */
+    this.gridAnalyser = this.ctx.createAnalyser();
+    this.gridAnalyser.fftSize = 2048;
+    this.gridAnalyser.smoothingTimeConstant = 0.35;
+    this.gridAnalyser.minDecibels = -95;
+    this.gridAnalyser.maxDecibels = -12;
+    node.connect(this.gridAnalyser);
+    this._gridSpec = new Uint8Array(this.gridAnalyser.frequencyBinCount);
+    this._prevGrid = new Uint8Array(this.gridAnalyser.frequencyBinCount);
+    this._gridHz = this.ctx.sampleRate / 2 / this.gridAnalyser.frequencyBinCount;
+    this._gridT = performance.now() / 1000;
+    this._sampler = setInterval(() => this._sampleOnset(), 20);
+
     this.ready = true;
+  },
+
+  // 50Hz, independent of how fast anything is being drawn.
+  _sampleOnset() {
+    if (!this.ready || !this.gridAnalyser) return;
+    const now = performance.now() / 1000;
+    // Clamped: a backgrounded tab throttles this to about 1Hz, and the grid
+    // should resynchronise on return rather than integrate the whole gap.
+    const dt = Math.min(0.2, Math.max(0.001, now - this._gridT));
+    this._gridT = now;
+    this._t += dt;
+    // How evenly this is actually being called. A timer is only independent
+    // of the render loop while the main thread is free to run it; a long
+    // enough frame blocks it too, and then the envelope is sampled in bursts
+    // and the tempo it implies is the frame rate's, not the music's. Feeding
+    // this into confidence means a device that cannot sample the audio
+    // properly falls back to the untimed pulse rather than locking to a
+    // tempo that is not there.
+    this._sdt += (dt - this._sdt) * 0.05;
+
+    const f = this._gridSpec;
+    this.gridAnalyser.getByteFrequencyData(f);
+    const top = Math.floor(f.length * 0.75);
+    // Two onset measures from one read. Broadband finds the tempo on any
+    // material, drums or not. The low band finds where the kick is, which
+    // broadband cannot: a track with a note on every eighth has the same
+    // onset energy at every phase of the beat, so folding the broadband
+    // envelope onto one period gives a tie and the phase comes down to a
+    // coin flip — measured, that put the downbeat between the kicks rather
+    // than on them about as often as not.
+    const loEnd = Math.min(top, Math.ceil(200 / this._gridHz));
+    let flux = 0, fluxLo = 0;
+    for (let i = 2; i < top; i++) {
+      const d = f[i] - this._prevGrid[i];
+      if (d > 0) { flux += d; if (i < loEnd) fluxLo += d; }
+    }
+    flux /= (top * 255);
+    fluxLo /= (Math.max(1, loEnd - 2) * 255);
+    this._prevGrid.set(f);
+
+    // Its own running mean and spread, so a beat can be ranked against how
+    // eventful this track normally is rather than against an absolute number.
+    const a = 1 - Math.exp(-dt / 1.2);
+    this._gMu += (flux - this._gMu) * a;
+    this._gSd += (Math.abs(flux - this._gMu) - this._gSd) * a;
+    const z = this._gSd > 1e-9 ? (flux - this._gMu) / this._gSd : 0;
+
+    const lo = Math.max(0, Math.floor(30 / this._gridHz));
+    const hi = Math.min(f.length - 1, Math.ceil(150 / this._gridHz));
+    let sum = 0;
+    for (let i = lo; i <= hi; i++) sum += f[i];
+
+    this._grid(dt, flux, z, sum / ((hi - lo + 1) * 255), fluxLo);
   },
 
   // Keeps a live handle on the mic/tab stream so a recogniser can record a
@@ -201,6 +311,265 @@ const A = {
     return Math.min(1, raw / p[key]);
   },
 
+  /* ===================================================================
+     THE BEAT GRID
+
+     Three questions, answered in order, each depending on the one before.
+
+     1. How fast? Autocorrelate the onset envelope. The lag whose copy of the
+        signal best matches the original is the beat period.
+     2. Where? Fold the envelope onto one period and find the phase most
+        onset energy lands on. That is where the beats are.
+     3. Which one is the strong one? Score how hard each beat hit, keep a
+        running average per position for bars of 2, 3 and 4, and take the
+        grouping whose average is most sharply peaked. The peak is the
+        downbeat.
+
+     Kept honest by a confidence measure: on music with no steady pulse at
+     all — much ambient, free-time playing, a spoken voice — there is no
+     right answer to question 1, and inventing one would be worse than not
+     answering. Below the threshold the grid is not used at all and `pulse`
+     falls back to firing on unusually strong onsets, which is slow and
+     meaningful even without a tempo.
+     =================================================================== */
+  OE_DT: 0.025,
+
+  _grid(dt, flux, onsetZ, rawBass, fluxLo) {
+    const N = this._oe.length;
+
+    /* Accumulate flux into fixed-rate buckets, spread across every bucket the
+       frame covered rather than dumped into the first of them.
+
+       This matters more than it looks. Whenever the frame rate falls below
+       the bucket rate — a heavy look on a throttling phone — dumping leaves a
+       run of empty buckets after each full one, which is an impulse train at
+       exactly the frame rate. Autocorrelation then finds the frame rate,
+       cleanly and confidently, and reports it as the tempo. Measured on a
+       look running at 6fps it locked to 145bpm on a 120bpm track. Spreading
+       the same energy evenly leaves a slow frame rate merely blurred, which
+       costs precision but invents nothing. */
+    this._oeAcc += flux;
+    this._oeLoAcc += fluxLo;
+    this._oeT += dt;
+    let steps = 0;
+    while (this._oeT >= this.OE_DT) { this._oeT -= this.OE_DT; steps++; }
+    if (steps > 0) {
+      const share = this._oeAcc / steps, shareLo = this._oeLoAcc / steps;
+      for (let i = 0; i < steps; i++) {
+        this._oe[this._oeHead] = share;
+        this._oeLo[this._oeHead] = shareLo;
+        this._oeHead = (this._oeHead + 1) % N;
+        this._oeFill = Math.min(N, this._oeFill + 1);
+      }
+      this._oeAcc = 0; this._oeLoAcc = 0;
+    }
+
+    /* How hard this beat hit. Weighted toward the low end, because what makes
+       one beat of a bar feel like the strong one is usually the kick, with
+       the broadband onset carried alongside so music with no drums at all
+       still has something to rank.
+
+       Integrated over the front of the beat rather than peaked over all of
+       it. A kick lands on the beat; noise and off-beat material land
+       anywhere, so a peak over the whole window scores every beat alike as
+       soon as the signal is at all twitchy — measured, taking the peak put
+       the downbeat on the kick only 1.03x as often as chance. Where the
+       energy falls within the beat is the whole distinction. */
+    if (this.beatPhase < 0.45) {
+      this._accent += (rawBass + Math.max(0, onsetZ) * 0.10) * dt;
+    }
+
+    // Re-solved twice a second. Cheap enough at this rate to be irrelevant
+    // (~40k multiply-adds), and the answer does not change faster than that.
+    this._trackT += dt;
+    if (this._trackT >= 0.5) { this._trackT = 0; this._solve(); }
+
+    if (this.lock > 0.25 && this._period > 0.1) {
+      // Only ever seeded when unset. Re-seeding whenever the next beat had
+      // passed sounds like the same thing and is the exact opposite: a beat
+      // being due is precisely the case the loop below exists to handle, and
+      // pushing the time forward there means it never fires at all.
+      if (this._nextBeat <= 0) this._nextBeat = this._t + this._period;
+      // Backgrounded tabs stop calling this, so catch up quietly rather than
+      // firing a minute's worth of beats into one frame.
+      if (this._t - this._nextBeat > this._period * 4)
+        this._nextBeat = this._t + this._period;
+      while (this._t >= this._nextBeat) {
+        this._nextBeat += this._period;
+        this._onBeat();
+      }
+      this.beatPhase = 1 - Math.min(1, Math.max(0,
+        (this._nextBeat - this._t) / this._period));
+      const g = this.group;
+      const pos = (((this._beatIdx - 1 - this._off) % g) + g) % g;
+      this.bar = (pos + this.beatPhase) / g;
+      this.tempo = Math.round(60 / this._period);
+    } else {
+      // No usable grid. Fire on onsets that stand out even by the standards
+      // of a track with no pulse, no more than one every 1.2s, so whatever
+      // is driven by this still moves in events rather than continuously.
+      this._sinceP += dt;
+      if (onsetZ > 2.4 && this.presence > 0.3 && this._sinceP > 1.2) {
+        this._sinceP = 0; this._pulseRaw = 1; this.pulseFlash = 1;
+      }
+      // Something for the continuous drivers to follow. Not the music, but
+      // slow enough to read as drift rather than as a wrong guess.
+      this.bar = (this.bar + dt / 2.4) % 1;
+      this.tempo = 0;
+    }
+
+    // Slower than `beat` on both counts: a downbeat is a bigger event and
+    // there is four times as long before the next one, so it can afford to
+    // land harder and take longer to let go without ever running into itself.
+    this._pulseRaw = Math.max(0, this._pulseRaw - dt * 1.6);
+    this.pulseFlash = Math.max(0, this.pulseFlash - dt * 4.0);
+    this.pulse += (this._pulseRaw - this.pulse) * (1 - Math.exp(-dt / 0.16));
+  },
+
+  _solve() {
+    const N = this._oe.length;
+    const M = Math.min(this._oeFill, N);
+    if (M < 240) return;                        // needs ~6s of history
+
+    const x = this._acX || (this._acX = new Float32Array(N));
+    let mu = 0;
+    for (let k = 0; k < M; k++) mu += this._oe[(this._oeHead - M + k + 2 * N) % N];
+    mu /= M;
+    let energy = 0, pos = 0, mx = 0;
+    for (let k = 0; k < M; k++) {
+      x[k] = this._oe[(this._oeHead - M + k + 2 * N) % N] - mu;
+      energy += x[k] * x[k];
+      const v = Math.max(0, x[k]);
+      pos += v; if (v > mx) mx = v;
+    }
+    energy = Math.max(energy / M, 1e-12);
+
+    /* Is there anything here that could be a beat at all? Autocorrelation
+       will always name a winner, and on smooth material the winner is noise
+       — measured on a synthetic ambient pad it reported 149bpm at half
+       confidence, which is a metronome invented out of nothing.
+
+       Onsets in music with a pulse are concentrated: most of the envelope is
+       near zero and the beats stand well above it. Ambient spreads its
+       energy evenly. The ratio of the largest bucket to the average one
+       separates them cleanly — measured, 19.9 on the beat-driven demo
+       against 7.4 on the pad. */
+    const crest = mx / Math.max(1e-9, pos / M);
+    const punch = Math.min(1, Math.max(0, (crest - 9.0) / 6.0));
+
+    const LO = 10, HI = 120;                    // 0.25s .. 3.0s
+    const s = this._acS || (this._acS = new Float32Array(HI + 1));
+    for (let lag = LO; lag <= HI; lag++) {
+      let a = 0;
+      for (let k = lag; k < M; k++) a += x[k] * x[k - lag];
+      s[lag] = a / ((M - lag) * energy);
+    }
+
+    /* Candidates are 60..170bpm, each reinforced by its own multiples. A
+       hi-hat on every eighth note correlates just as strongly at half the
+       beat as at the beat, so without this the tracker latches onto the
+       subdivision and we are back to something firing every quarter second.
+       A real beat has peaks at 2x and 3x its period; a subdivision does
+       not. */
+    const CL = 14, CH = 40;                     // 0.35s .. 1.00s
+    let best = -1e9, bestLag = 20, mean = 0, mean2 = 0, n = 0;
+    for (let lag = CL; lag <= CH; lag++) {
+      let v = s[lag];
+      if (lag * 2 <= HI) v += s[lag * 2] * 0.55;
+      if (lag * 3 <= HI) v += s[lag * 3] * 0.30;
+      mean += v; mean2 += v * v; n++;
+      if (v > best) { best = v; bestLag = lag; }
+    }
+    mean /= n;
+    const sd = Math.sqrt(Math.max(1e-12, mean2 / n - mean * mean));
+    // How far the winner stands above the field. A track with a clear pulse
+    // gives one tall peak; one without gives a flat row of near-ties, and
+    // the winner of a tie is noise.
+    const evenly = Math.min(1, Math.max(0, (0.075 - this._sdt) / 0.035));
+    const conf = this.presence < 0.25 ? 0
+               : Math.min(1, Math.max(0, ((best - mean) / sd - 0.9) / 2.2))
+                 * evenly * punch;
+
+    // Where the beats sit: fold the envelope onto one period and take the
+    // phase carrying the most onset energy. Solving for phase directly like
+    // this, rather than steering a phase-locked loop, means a tempo change
+    // costs one re-solve instead of a slow re-acquisition.
+    // Low band weighted heavily here, and not at all in the tempo search
+    // above: the two questions want different evidence. Tempo wants every
+    // onset there is, so it works on material with no drums. Phase wants
+    // the one onset that is the beat, and on anything with a kick that is a
+    // low-frequency event. Where there is no kick this is close to zero and
+    // the broadband term decides, which is the right fallback.
+    let muLo = 0;
+    for (let k = 0; k < M; k++) muLo += this._oeLo[(this._oeHead - M + k + 2 * N) % N];
+    muLo /= M;
+    let bestJ = 0, bestV = -1;
+    for (let j = 0; j < bestLag; j++) {
+      let v = 0;
+      for (let k = M - 1 - j; k >= 0; k -= bestLag) {
+        v += Math.max(0, x[k])
+           + Math.max(0, this._oeLo[(this._oeHead - M + k + 2 * N) % N] - muLo) * 2.2;
+      }
+      if (v > bestV) { bestV = v; bestJ = j; }
+    }
+    const period = bestLag * this.OE_DT;
+    const tNext = this._t + (bestLag - bestJ) * this.OE_DT;
+
+    if (conf > 0.25) {
+      if (this.lock < 0.2) {
+        // Nothing worth preserving — take the new answer whole.
+        this._period = period; this._nextBeat = tNext;
+      } else {
+        this._period += (period - this._period) * 0.25;
+        // Wrap the correction to the nearest beat before applying it, or a
+        // grid that is one beat out gets dragged the long way round and
+        // stutters every time it is re-solved.
+        let err = tNext - this._nextBeat;
+        err -= Math.round(err / this._period) * this._period;
+        this._nextBeat += err * 0.30;
+      }
+    }
+    this.lock += (conf - this.lock) * 0.35;
+  },
+
+  _onBeat() {
+    const a = this._accent; this._accent = 0;
+    const idx = this._beatIdx;
+
+    /* The accent just collected belongs to the beat that opened the window,
+       which is the previous one. Each position in the bar keeps a running
+       average of how hard its beat tends to hit, updated only when that
+       position comes round — about six bars of memory. */
+    for (let gi = 0; gi < 3; gi++) {
+      const G = gi + 2, sl = this._slots[gi];
+      const j = (((idx - 1) % G) + G) % G;
+      sl[j] += (a - sl[j]) * 0.16;
+    }
+
+    // Pick the grouping whose accents are most sharply peaked, biased toward
+    // four: it is much the most common, and on a tie between 2 and 4 the
+    // slower reading is the one that feels like a bar.
+    let bestScore = -1, bestG = this.group, bestOff = this._off, hold = -1;
+    for (let gi = 0; gi < 3; gi++) {
+      const G = gi + 2, sl = this._slots[gi];
+      let m = 0, mx = -1, at = 0;
+      for (let j = 0; j < G; j++) { m += sl[j]; if (sl[j] > mx) { mx = sl[j]; at = j; } }
+      m /= G;
+      const sc = (mx - m) / Math.max(m, 1e-6) * (G === 4 ? 1.20 : G === 2 ? 1.0 : 0.80);
+      if (G === this.group && at === this._off) hold = sc;
+      if (sc > bestScore) { bestScore = sc; bestG = G; bestOff = at; }
+    }
+    // Sticky. Moving the downbeat is the most visible thing this can do —
+    // one gap of the wrong length, right where a gap of the right length is
+    // the entire point — so a near-tie keeps the answer it already had.
+    if (hold < 0 || bestScore > hold * 1.25) { this.group = bestG; this._off = bestOff; }
+
+    if ((((idx - bestOff) % bestG) + bestG) % bestG === 0) {
+      this._pulseRaw = 1; this.pulseFlash = 1;
+    }
+    this._beatIdx = idx + 1;
+  },
+
   update(dt) {
     if (!this.ready) return;
     this.analyser.getByteFrequencyData(this.freq);
@@ -303,12 +672,20 @@ const A = {
 
   stop() {
     if (this.osc) clearTimeout(this.osc);
+    if (this._sampler) clearInterval(this._sampler);
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     if (this.ctx) this.ctx.close();
     Object.assign(this, {
       ctx:null, stream:null, osc:null, ready:false, presence:0, _floor:0.002,
       beat:0, beatFlash:0, bpm:0, _beatRaw:0, _hist:[], _beatTimes:[],
       _prevSpec:null, _fluxHist:[],
+      tempo:0, lock:0, group:4, beatPhase:0, bar:0, pulse:0, pulseFlash:0,
+      _t:0, _oe:new Float32Array(400), _oeLo:new Float32Array(400),
+      _oeHead:0, _oeFill:0, _oeAcc:0, _oeLoAcc:0, _oeT:0,
+      _trackT:0, _period:0.5, _nextBeat:0, _beatIdx:0, _accent:0, _off:0,
+      _pulseRaw:0, _sinceP:0, gridAnalyser:null, _sampler:null,
+      _gridSpec:null, _prevGrid:null, _gridT:0, _gMu:0, _gSd:0.002, _sdt:0.02,
+      _slots:[new Float32Array(2), new Float32Array(3), new Float32Array(4)],
       _peak:{ bass:.01, mid:.01, high:.01, air:.01, level:.01 },
       _env:{ bass:0, mid:0, high:0, air:0, level:0 },
       _env2:{ bass:0, mid:0, high:0, air:0, level:0 },

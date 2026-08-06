@@ -64,6 +64,11 @@ const FX = {
       uniform float uDev;            // 0..1 cyanotype development, driven by the music
       uniform int   uMode;
       uniform float uBass, uMid, uHigh, uLevel, uBeat;
+      // The bar, not the beat. uPulse fires once per bar on the downbeat;
+      // uBar runs 0..1 across the bar and wraps on it, so anything that
+      // wants to flow with the music rather than react to it has a
+      // continuous, tempo-locked ramp to ride.
+      uniform float uPulse, uBar;
       uniform vec3  uPal[5];
       uniform vec4  uDrops[4];     // x, y, age(sec), active
       uniform float uHasTex;
@@ -264,10 +269,22 @@ const FX = {
           // fast rise moves every pixel of the image simultaneously — which
           // reads as a snap however smooth the underlying band is. Depth of
           // water should swell, not switch.
-          // The swell carries depth over a phrase; the beat term carries the
-          // hit. Without it every driver here was slower than a beat, so
-          // nothing in the frame could land on one.
-          float amt = 0.0100 + uSwell * 0.0150 + uBeat * 0.0085;
+          // Three timescales, and it needs all three. The swell carries depth
+          // over a phrase. The breath rides the bar, so between hits the
+          // water is still moving with the music rather than merely settling
+          // — it arrives with the downbeat and recedes across the bar, which
+          // is what makes the surface feel like it is flowing along with the
+          // song. The pulse carries the hit itself.
+          //
+          // The hit used to be uBeat, which fires on every onset there is:
+          // at 120bpm that is a surge every quarter second, and a surge that
+          // never finishes before the next one starts is not a pulse, it is
+          // a churn. That is what read as frantic. One surge per bar is
+          // eight times rarer, so it can be almost twice as large and still
+          // leave the water calm in between.
+          float breath = 0.5 + 0.5 * cos(uBar * 6.28318);
+          float amt = 0.0100 + uSwell * 0.0150
+                    + breath * uLevel * 0.0042 + uPulse * 0.0145;
           vec2 off = grad * amt;
 
           // A puddle of the second picture, spreading with the music. Its
@@ -315,7 +332,11 @@ const FX = {
           // Caustic glint along the crests. h must be clamped before the
           // power: unnormalised it exceeded 1 and blew whole regions white.
           float cr = clamp(h * 0.5 + 0.5, 0.0, 1.0);
-          col += pow(cr, 7.0) * (0.10 + uLevel * 0.14 + uBeat * 0.32);
+          // The glint keeps a little of the fast beat. It is brightness, not
+          // geometry — nothing moves when it changes — so it can shimmer with
+          // the detail of the music without costing any of the calm the
+          // slower drivers above just bought.
+          col += pow(cr, 7.0) * (0.10 + uLevel * 0.14 + uPulse * 0.34 + uBeat * 0.09);
         }
 
         // ================================================================
@@ -1032,7 +1053,7 @@ const FX = {
           // than the extra movement bought.
           vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
                    * (0.6 + uLevel * 1.4)
-                   + vec2(uBeat * uBeat * 0.022, uBeat * uBeat * -0.015);
+                   + vec2(uPulse * uPulse * 0.032, uPulse * uPulse * -0.022);
 
           // Nearest blob wins, so overlapping shapes resolve to one surface
           // instead of blending into each other. Evaluated over a 3x3
@@ -1071,13 +1092,25 @@ const FX = {
                       + sin(ang * 3.0 - s2 - uMorph * 0.71) * 0.11
                       + sin(ang * 5.0 + s3 + uMorph * 0.51) * 0.055;
 
-              // Each shape answers the beat on its own offset, so the sheet
-              // breathes in loose sequence rather than as one object. Driven
-              // by the slow envelope, so it swells rather than snapping.
+              // Each shape answers on its own offset, so the sheet breathes in
+              // loose sequence rather than as one object.
               float own = 0.5 + 0.5 * sin(uMorph * 0.8 + hash(id + 3.3) * 6.28);
+              // And each takes its turn at its own point in the bar, so a
+              // wave crosses the field once per bar. This is the part that is
+              // continuous: between downbeats the sheet is still moving, and
+              // moving in time, rather than holding until the next event.
+              // Scaled by level so silence is still, which is the whole
+              // reason the resting size below has no free term of its own.
+              float turn = 0.5 + 0.5 * cos((uBar - hash(id + 7.7)) * 6.28318);
+              // The hit is the downbeat, not every onset. Answering all of
+              // them meant the sheet never finished one response before the
+              // next arrived, so it read as trembling rather than as
+              // breathing. Four times rarer, so it can land half again as
+              // hard and still leave the field settled in between.
               float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
                         * (0.77 + uSwell * (0.23 + own * 0.26)
-                           + uBeat * uBeat * (0.13 + own * 0.35));
+                           + turn * uLevel * 0.15
+                           + uPulse * uPulse * (0.19 + own * 0.46));
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
             }
@@ -1137,7 +1170,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPal','uDrops','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uPal','uDrops','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1296,6 +1329,8 @@ const FX = {
     gl.uniform1f(this.u.uHigh, p.high);
     gl.uniform1f(this.u.uLevel, p.level);
     gl.uniform1f(this.u.uBeat, p.beat);
+    gl.uniform1f(this.u.uPulse, p.pulse || 0);
+    gl.uniform1f(this.u.uBar, p.bar || 0);
     gl.uniform1f(this.u.uHasTex, this.hasTex);
 
     const pal = new Float32Array(15);
