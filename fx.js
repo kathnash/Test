@@ -70,7 +70,8 @@ const FX = {
       // continuous, tempo-locked ramp to ride.
       uniform float uPulse, uBar;
       uniform vec3  uPal[5];
-      uniform vec4  uDrops[4];     // x, y (uv), age(sec), strength
+      uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
+      uniform float uDropAmp[6];   // height, which is a separate question
       uniform float uHasTex;
       // Second picture, for the looks that composite two sources.
       uniform float uShuffle;  // integrated, not uTime * rate
@@ -163,30 +164,49 @@ const FX = {
            and a half, which looks exactly like a disturbance that happens and
            then stops. At 0.11 it spends five or six seconds crossing, which
            is the pace this is supposed to have. */
-        for (int i = 0; i < 4; i++){
+        /* Size and height are two separate questions, so each ring carries
+           two numbers. Height comes from how loud the sound was. Size comes
+           from what kind of sound it was: a bass hit drops a big stone and
+           makes a broad, fast, far-reaching ring, while something bright
+           makes a small tight one that does not travel and is gone quickly.
+           That is roughly what water does, and it is the one place here where
+           the character of a sound rather than its loudness changes the
+           picture.
+
+           Note that frequency falls as size rises. What is displaced is the
+           gradient, so a ring's steepness is its frequency times its height —
+           holding those roughly equal across the range is what keeps a small
+           ring from being a sharper distortion than a large one. */
+        for (int i = 0; i < 6; i++){
           if (uDrops[i].w > 0.01){
+            float size = uDrops[i].w;
             vec2 c = vec2(uDrops[i].x * aspect, uDrops[i].y);
             float d = distance(p, c);
             float age = uDrops[i].z;
-            float front = age * 0.11;
+            // Bigger waves travel faster, but not by as much as the physics would
+            // suggest: speed is also how long a ring stays in frame, and at 0.155
+            // a large one was across a portrait phone in under four seconds.
+            float front = age * (0.065 + size * 0.055);
             // Squared explicitly. pow() of a negative base is undefined in
             // GLSL, and d - front is negative everywhere inside the ring.
-            float u = (d - front) * 3.4;
+            float u = (d - front) * (5.4 - size * 2.0);
             float band = exp(-u * u);
-            // Energy spread around a growing circumference, then a long fade.
-            float amp = uDrops[i].w * 0.95 / (1.0 + front * 2.0) * exp(-age * 0.22);
-            /* Long wavelength and modest amplitude, and the two are the same
-               decision. What is displaced is the gradient of this, so the
-               steepness of a ring is its frequency times its height, not its
-               height — at 24 cycles and full height the crest was fifteen
-               times steeper than the whole standing swell put together, which
-               is a lens sweeping over the picture rather than a ripple. A
-               broad, shallow ring is both gentler and more like slow water.
-
-               cos, not sin: it puts the crest on the wavefront itself, and at
-               the moment of the drop a single peak at the point of impact
-               rather than a node there. */
-            h += cos((d - front) * 15.0) * band * amp * smoothstep(0.0, 0.40, age);
+            // Energy spread around a growing circumference, then a fade that
+            // is quicker for the small ones so they free their slot sooner.
+            /* Scaled down against the four-slot version by about a third,
+               which is the ratio of the slot counts. Total agitation is
+               roughly the ring count times the height of one, so raising the
+               ceiling from one every 1.7s to one a second - half again as
+               many rings alive - has to come out of the height of each or the
+               water is simply half again as busy. Measured, leaving the
+               height alone took mean motion from 6.8 to 17.4. */
+            float amp = uDropAmp[i] * (0.26 + size * 0.32)
+                      / (1.0 + front * 2.0) * exp(-age * (0.36 - size * 0.15));
+            // cos, not sin: it puts the crest on the wavefront itself, and at
+            // the moment of the drop a single peak at the point of impact
+            // rather than a node there.
+            h += cos((d - front) * (23.0 - size * 9.0)) * band * amp
+               * smoothstep(0.0, 0.40, age);
           }
         }
         return h / 2.2;
@@ -480,7 +500,7 @@ const FX = {
 
           float density = fbm(uv * vec2(ar, 1.0) * 1.4 + 3.0);
           float swell = 0.0;
-          for (int i = 0; i < 4; i++){
+          for (int i = 0; i < 6; i++){
             if (uDrops[i].w > 0.01){
               float d = length(uv - uDrops[i].xy);
               swell += exp(-d * 3.0) * exp(-uDrops[i].z * 1.1) * 0.40;
@@ -696,7 +716,7 @@ const FX = {
 
           // Developer spreading from each transient.
           float dev = 0.0;
-          for (int i = 0; i < 4; i++){
+          for (int i = 0; i < 6; i++){
             if (uDrops[i].w > 0.01){
               float d = distance(uv, uDrops[i].xy);
               float age = uDrops[i].z;
@@ -1217,7 +1237,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uPal','uDrops','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1387,13 +1407,17 @@ const FX = {
     }
     gl.uniform3fv(this.u.uPal, pal);
 
-    const drops = new Float32Array(16);
-    for (let i = 0; i < 4; i++) {
+    const drops = this._dropBuf || (this._dropBuf = new Float32Array(24));
+    const damp = this._dropAmp || (this._dropAmp = new Float32Array(6));
+    drops.fill(0);
+    for (let i = 0; i < 6; i++) {
       const d = p.drops[i];
+      damp[i] = d ? (d.a == null ? 1 : d.a) : 0;
       if (d) { drops[i*4] = d.x; drops[i*4+1] = d.y; drops[i*4+2] = d.age;
                drops[i*4+3] = d.s == null ? 1 : d.s; }
     }
     gl.uniform4fv(this.u.uDrops, drops);
+    gl.uniform1fv(this.u.uDropAmp, damp);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     return this.canvas;

@@ -644,23 +644,53 @@ function updateDrops(dt) {
      rings in three were born outside the frame and arrived as a vague swell
      from off the edge instead of as a ripple. These are plain uv now, and the
      shader scales them. */
-  const asked = A.lock > 0.25 ? A.pulseFlash > 0.9 : A.beatFlash > 0.9;
-  // 1.7s, not 1.2s. Only four rings fit in the shader, so the spacing is what
-  // decides how far back the oldest one can be before it is evicted: at 1.2s
-  // the surface only ever remembered the last five seconds, which threw rings
-  // away while they were still crossing the frame.
-  if (asked && time - lastDrop > 1.70) {
+  /* At most one a second, which is a ceiling and not a rate — what actually
+     spawns one is the music. A downbeat always qualifies; an ordinary beat
+     does too, but only if it is loud enough to be worth a ripple, so quiet
+     passages stay quiet instead of filling the water on the metronome.
+
+     Six fit in the shader, and at this spacing that is six seconds of memory,
+     which is about how long a large ring takes to leave the frame. That
+     pairing is not a coincidence — the spacing decides how far back the
+     oldest ring can be before it is evicted, so a cap of one a second wants
+     six slots the way one every 1.7s wanted four. */
+  /* Which beats qualify. Where there is a grid: the downbeat, and the beat
+     halfway through the bar — the two you would actually feel, rather than
+     every second on a metronome. At 120bpm in four that is one a second on
+     its own, which is where the ceiling came from. At a slower tempo it is
+     less often, which is correct: the ceiling is a limit, not a rate.
+     Where there is no grid, any strong onset, with the ceiling doing the
+     work instead. */
+  const half = Math.floor(A.group / 2);
+  const strong = A.lock > 0.25 ? (A.gridFlash > 0.9 && A.beatInBar === 0)
+                               : A.pulseFlash > 0.9;
+  const ordinary = A.lock > 0.25
+    ? (A.gridFlash > 0.9 && A.beatInBar === half && half > 0)
+    : (A.beatFlash > 0.9 && resp(A.level) > 0.34);
+  // 0.95 rather than 1.00. The two qualifying beats are exactly a second
+  // apart at 120bpm in four, and a ceiling set to the interval it is meant to
+  // admit rejects half of them on rounding alone.
+  if ((strong || ordinary) && time - lastDrop > 0.95) {
     lastDrop = time;
+
+    /* Two questions, two answers, and they are genuinely independent.
+
+       How tall: how loud the sound was. A downbeat gets a little more,
+       because it is the one carrying the bar.
+
+       How big: what kind of sound it was, low against bright, so a kick
+       drops a big stone and a hat drops a pebble. Taken from the instantaneous
+       spectrum rather than from A.bass and A.air, which are envelope-followed
+       and so slow that every hit measures as the same mixture of the two. */
+    const tone = A.tone();                                // 0 bright, 1 bassy
     drops.push({
       x: 0.14 + Math.random() * 0.72,
       y: 0.14 + Math.random() * 0.72,
       age: 0,
-      // How big a ripple this sound makes. The reactivity lives here now,
-      // where it is one local event, rather than in the depth of the whole
-      // field, where it was every pixel at once.
-      s: 0.50 + Math.min(0.55, resp(A.level) * 0.34 + A.pulse * 0.30)
+      s: Math.max(0.25, Math.min(1, 0.22 + tone * 0.92 + (strong ? 0.14 : 0))),
+      a: Math.max(0.40, Math.min(1, 0.38 + resp(A.level) * 0.46 + (strong ? 0.18 : 0)))
     });
-    if (drops.length > 4) drops.shift();
+    if (drops.length > 6) drops.shift();
   }
 }
 

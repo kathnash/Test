@@ -33,6 +33,8 @@ const A = {
   bar: 0,                 // 0..1 through the current bar, wraps at the downbeat
   pulse: 0,               // followed envelope, fires on downbeats only
   pulseFlash: 0,          // instantaneous downbeat trigger
+  gridFlash: 0,           // instantaneous, on every beat of the grid
+  beatInBar: 0,           // 0 on the downbeat, up to group - 1
 
   _hist: [], _lastBeat: 0, _beatTimes: [],
   _peak: { bass:.01, mid:.01, high:.01, air:.01, level:.01 },
@@ -147,6 +149,26 @@ const A = {
     this._sampler = setInterval(() => this._sampleOnset(), 20);
 
     this.ready = true;
+  },
+
+  /* What kind of sound is happening right now: 1 is all low, 0 all bright.
+
+     Read straight off the grid analyser's spectrum rather than from the band
+     envelopes, because those are far too slow to characterise a single hit —
+     at a 280ms release the previous hi-hat is still half present when the
+     kick lands, so every hit measures as roughly the same mixture. Measured
+     on the demo, the envelopes gave a range of 0.65..0.85 where this gives
+     the kicks and the hats genuinely different answers. */
+  tone() {
+    const f = this._gridSpec;
+    if (!f || !this._gridHz) return 0.5;
+    const at = hz => Math.max(1, Math.min(f.length - 1, Math.round(hz / this._gridHz)));
+    let lo = 0, hi = 0;
+    const l0 = at(30), l1 = at(180), h0 = at(2000), h1 = at(11000);
+    for (let i = l0; i <= l1; i++) lo += f[i];
+    for (let i = h0; i <= h1; i++) hi += f[i];
+    lo /= (l1 - l0 + 1); hi /= (h1 - h0 + 1);
+    return (lo + 1) / (lo + hi + 2);
   },
 
   // 50Hz, independent of how fast anything is being drawn.
@@ -423,6 +445,7 @@ const A = {
     // land harder and take longer to let go without ever running into itself.
     this._pulseRaw = Math.max(0, this._pulseRaw - dt * 1.6);
     this.pulseFlash = Math.max(0, this.pulseFlash - dt * 4.0);
+    this.gridFlash = Math.max(0, this.gridFlash - dt * 4.0);
     this.pulse += (this._pulseRaw - this.pulse) * (1 - Math.exp(-dt / 0.16));
   },
 
@@ -564,9 +587,9 @@ const A = {
     // the entire point — so a near-tie keeps the answer it already had.
     if (hold < 0 || bestScore > hold * 1.25) { this.group = bestG; this._off = bestOff; }
 
-    if ((((idx - bestOff) % bestG) + bestG) % bestG === 0) {
-      this._pulseRaw = 1; this.pulseFlash = 1;
-    }
+    this.beatInBar = (((idx - bestOff) % bestG) + bestG) % bestG;
+    this.gridFlash = 1;
+    if (this.beatInBar === 0) { this._pulseRaw = 1; this.pulseFlash = 1; }
     this._beatIdx = idx + 1;
   },
 
@@ -680,6 +703,7 @@ const A = {
       beat:0, beatFlash:0, bpm:0, _beatRaw:0, _hist:[], _beatTimes:[],
       _prevSpec:null, _fluxHist:[],
       tempo:0, lock:0, group:4, beatPhase:0, bar:0, pulse:0, pulseFlash:0,
+      gridFlash:0, beatInBar:0,
       _t:0, _oe:new Float32Array(400), _oeLo:new Float32Array(400),
       _oeHead:0, _oeFill:0, _oeAcc:0, _oeLoAcc:0, _oeT:0,
       _trackT:0, _period:0.5, _nextBeat:0, _beatIdx:0, _accent:0, _off:0,

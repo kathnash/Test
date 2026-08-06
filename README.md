@@ -421,6 +421,35 @@ half the movement, and much more of what remains arriving as events rather than 
 ring, measured against a frozen surface, now has its crest at r = 0.07, 0.11, 0.25, 0.29 at one, two,
 three and four seconds, and is still legible at five.
 
+**Then the ceiling went up to one ring a second, and two numbers had to move with it.**
+
+*Total agitation is the ring count times the height of one.* Raising the rate from one every 1.7s to
+one a second, and the slots from four to six to hold them, is half again as many rings alive at
+once — leaving their height alone simply made the water half again as busy. Measured, mean motion
+went **6.8 → 17.4**, worse than the frantic version this all started from. Scaling each ring's
+height down by the ratio of the slot counts brings it back to **8.65**. The slot count and the
+spacing are the same decision seen twice: the spacing sets how far back the oldest ring can be
+before it is evicted, so one a second wants six slots the way one every 1.7s wanted four.
+
+*Which beats qualify should be musical, not a metronome.* With a grid, the downbeat and the beat
+halfway through the bar — the two you would actually feel. At 120bpm in four that is one a second on
+its own, so the ceiling is a limit rather than a rate, and a slower tempo gives fewer. Without a
+grid, any strong onset, with the ceiling doing the work. One detail worth the comment it carries in
+the source: the gate is 0.95s, not 1.00s, because those two beats are *exactly* a second apart at
+120bpm and a ceiling set to the interval it means to admit rejects half of them on rounding alone.
+
+**Size and height are separate questions, and want separate evidence.** Height comes from level.
+Size comes from what kind of sound it was — low against bright, so a kick drops a big stone and a
+hat drops a pebble, and size then sets wavelength, speed, reach and lifetime together. Read from the
+*instantaneous* spectrum, not from `A.bass` and `A.air`: those are envelope-followed with a 280ms
+release, so the previous hi-hat is still half present when the kick lands and every hit measures as
+the same mixture. Measured on the demo, the envelopes gave sizes spanning 0.65–0.85 where the raw
+spectrum gives 0.61–1.00.
+
+Note which way frequency moves with size: *down*. Steepness is frequency times height, so holding
+those roughly equal across the range is what stops a small ring from being a sharper distortion
+than a large one.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
