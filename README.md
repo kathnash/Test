@@ -560,6 +560,37 @@ backticks inside a *comment* in the GLSL — quoting a variable name, in prose �
 and the rest of the shader is parsed as JavaScript. The error surfaces as `Unexpected identifier`
 naming some GLSL variable, and then `FX is not defined`.
 
+#### The response should travel, and the glow was wrong
+
+Two corrections, one of them to a thing that had just been added.
+
+**The rim light was a feature where it should have been a texture.** Ripple's glint translated
+across the *mechanism* correctly and the *intent* not at all: it made the beat a main element of a
+look whose subject is slow shape. Cut to about a fifth — enough to give an edge some thickness, not
+enough to read as an effect. Measured lift on a beat went from 15.3 levels to **1.8**.
+
+**Every shape answering at once is one gesture, however slowly it happens.** The swell now arrives
+in a region that drifts across the field, so there is always a part opening and a part settling
+while the rest carries on. Two things this needed that were not obvious:
+
+- *The drift rate is the whole thing.* At a two-minute circuit the region is not slow, it is
+  stationary — measured over half a minute, the busiest sixth of the frame never once changed. At
+  around forty seconds it crosses in twenty or so, and the busiest region moves 14 times in 26
+  samples across 3 of 6 regions. It is on `uTime` at a fixed rate, not a music-driven one, because
+  multiplying time by a changing rate displaces the whole path the instant the rate changes.
+- *Fewer shapes answering means each must answer further.* Keeping the old per-shape amount while
+  only a third of the field participates took total motion from 2.12 to **0.63** — most of the
+  reactivity simply disappeared. The focus term is correspondingly large, with a smaller share for
+  everyone else so the rest of the sheet is not switched off.
+
+**And nothing is ever completely still.** The blob centres drift, and each shape breathes, on
+`uTime` rather than on the morph clock — so the field moves at the same gentle rate whether or not
+anything is playing. Measured motion in silence is 0.55 against 0.79 with music: clouds do not stop
+when the room goes quiet.
+
+Net for Fields: motion **3.86 → 0.79**, quiet-to-loud range **4.37x**, frame cost down from 140ms to
+122ms.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It

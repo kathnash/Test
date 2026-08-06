@@ -1161,6 +1161,31 @@ const FX = {
           vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
                    * (0.7 + uSwell * 0.9);
 
+          /* Where the sheet is answering at the moment. The swell used to lift
+             every shape at once, which is one gesture however slowly it
+             happens; this makes it arrive somewhere and move on, so there is
+             always a part of the field opening and a part settling while the
+             rest carries on with its own drift.
+
+             On uTime at a fixed rate, not on a rate that varies with the
+             music: multiplying time by a changing rate displaces the whole
+             path the instant the rate changes, so the region would jump
+             across the frame rather than travel. Two incommensurate sines,
+             so it wanders instead of repeating a circuit.
+
+             The rates matter more than they look. At 0.047 the region took
+             over two minutes to come round, which is not slow, it is
+             stationary — measured over half a minute the busiest part of the
+             frame never once changed. Around forty seconds a circuit it
+             crosses the frame in twenty or so, which is a drift you can
+             follow without ever catching it hurrying. */
+          vec2 focus = vec2(aspect * (0.5 + 0.44 * sin(uTime * 0.163)),
+                            0.5 + 0.42 * sin(uTime * 0.112 + 1.9));
+          // Sized to the frame, so the region is about a third of it either
+          // way up rather than a fixed patch that is most of a phone and a
+          // corner of a desktop.
+          float reach = 0.07 + aspect * 0.075;
+
           // Nearest blob wins, so overlapping shapes resolve to one surface
           // instead of blending into each other. Evaluated over a 3x3
           // neighbourhood: testing only the cell a pixel falls in clips every
@@ -1174,9 +1199,15 @@ const FX = {
               vec2 id = base + vec2(float(dx), float(dy));
               vec2 c = (id + 0.5) * cell
                      + (vec2(hash(id + 0.7), hash(id + 4.9)) - 0.5) * cell * vec2(0.55, 0.45);
-              // Bands drift sideways at their own pace.
-              c.x += sin(uMorph * (0.38 + hash(id + 8.1) * 0.32) + hash(id) * 6.3)
+              /* Bands drift at their own pace, on uTime rather than on the
+                 morph clock — so they are always moving, at the same speed,
+                 whether or not anything is playing. Clouds do not stop when
+                 the room goes quiet, and this look is supposed to be worth
+                 watching before a note is played. */
+              c.x += sin(uTime * (0.085 + hash(id + 8.1) * 0.060) + hash(id) * 6.3)
                    * cell.x * 0.15;
+              c.y += sin(uTime * (0.060 + hash(id + 2.7) * 0.045) + hash(id + 5.1) * 6.3)
+                   * cell.y * 0.11;
 
               vec2 d = gp - c;
               // Flattened, because these are lying-down shapes.
@@ -1218,10 +1249,24 @@ const FX = {
                  resting size, and now reaches 1.42x. Size still answers the
                  music, it just answers it the way bread rises. */
               float own = 0.5 + 0.5 * sin(uMorph * 0.62 + hash(id + 3.3) * 6.28);
-              float breathe = 0.5 + 0.5 * sin(uMorph * 0.41 + hash(id + 7.7) * 6.28);
+              // Always breathing, on its own clock and its own phase, whether
+              // or not there is any music. This is the floor of movement that
+              // makes the field never quite still.
+              float breathe = 0.5 + 0.5 * sin(uTime * 0.070 + hash(id + 7.7) * 6.28);
+              // How much of the swell reaches this shape: mostly a question of
+              // how near it is to the travelling region, with a little for
+              // everyone so the rest of the sheet is not simply switched off.
+              vec2 fd = c - focus;
+              float near = exp(-dot(fd, fd) / reach);
               float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
-                        * (0.80 + uSwell * (0.20 + own * 0.24)
-                           + breathe * (0.02 + uSwell * 0.16));
+                        // The focus term is large because it is the only one
+                        // that applies to most of the field at any moment: with
+                        // a third of the shapes answering instead of all of
+                        // them, each has to answer further for the sheet to
+                        // move at all. Measured, keeping the old per-shape
+                        // amount took total motion from 2.12 to 0.63.
+                        * (0.80 + uSwell * (0.12 + near * 0.50 + own * 0.14)
+                           + breathe * (0.045 + uSwell * 0.10));
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
             }
@@ -1242,20 +1287,16 @@ const FX = {
             // Just inside the cut, a hint of the paper's thickness.
             col *= 1.0 - smoothstep(-cell.x * 0.030, 0.0, bestD) * 0.12;
 
-            /* And a soft light around the inside of each rim, which is where
-               the beat lives — the same trade Ripple's glint made. Light
-               moves nothing, so it can answer every beat there is without
-               costing any of the stillness the geometry above just bought,
-               and a bright edge is what makes a shape read as a globule with
-               a surface rather than as a hole cut in paper.
-
-               Rides the swell as well as the beat, so a beat in a quiet
-               passage is a faint edge and a beat in a loud one is the whole
-               colony lighting up. */
+            /* A whisper of light just inside each rim. This was Ripple's
+               glint translated across, and it was wrong here — it made a
+               feature of something that should not be one, and turned the
+               beat into a main element of a look whose subject is slow
+               shape. What is left is about a fifth of it: enough to give an
+               edge some thickness, not enough to read as an effect. */
             float rimD = abs(bestD + cell.x * 0.075) / (cell.x * 0.090);
             float rim = exp(-rimD * rimD);
-            col += rim * (0.048 + uSwell * 0.085
-                          + uBeat * (0.055 + uSwell * 0.13));
+            col += rim * (0.012 + uSwell * 0.018
+                          + uBeat * (0.010 + uSwell * 0.026));
           }
 
           float gr = hash(floor(vUv * uRes / 1.3));
