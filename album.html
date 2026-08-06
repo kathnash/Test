@@ -162,10 +162,13 @@
   </div>
   <p id="err"></p>
   <p class="note">Drop an image or a video on the page at any time to use it as the source.</p>
-  <!-- Stamped at build time so there is something to check a deploy against.
-       Left as the placeholder when the page is opened straight from the repo,
-       which the script below turns into a readable label. -->
-  <p class="ver" id="ver">__BUILD__</p>
+  <!-- Written out in full rather than substituted at build time. GitHub Pages
+       serves this file exactly as it is committed, so anything the build step
+       fills in is missing from the copy served over the git link — which is
+       the one place a version number most needs to be right. Bumped by hand
+       with every deploy; the build step prints it so it cannot be reported
+       wrongly. -->
+  <p class="ver" id="ver">v57 &middot; 6 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -1715,15 +1718,6 @@ function recordClip() {
              RECORD_SECONDS * 1000);
 }
 recBtn.onclick = recordClip;
-
-/* The build stamp is substituted into the markup at build time. Opened
-   straight from the repo it is still the placeholder, so say so rather than
-   showing a row of underscores. Tested for by its leading underscores so that
-   the token itself does not appear here and get substituted too. */
-(() => {
-  const el = document.getElementById('ver');
-  if (el && el.textContent.trim().slice(0, 2) === '__') el.textContent = 'dev build';
-})();
 
 const shotBtn = document.getElementById('shot');
 shotBtn.onclick = () => {
