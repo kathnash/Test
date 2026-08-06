@@ -1155,16 +1155,11 @@ const FX = {
           vec2 cell = vec2(aspect / 2.1, 1.0 / 5.2);
           vec2 base = floor(gp / cell);
 
-          // The cutouts hold still while the photograph inside them jolts on
-          // the beat. Edges that stay put make the shift underneath far more
-          // legible than moving everything together would. Squared, because
-          // at 120bpm the beat envelope has not returned to zero before the
-          // next one lands, and a linear term lifts the whole interval rather
-          // than marking the hit - measured, that cost more in correlation
-          // than the extra movement bought.
+          // The photograph inside the cutouts drifts, and only drifts. It used
+          // to jolt on the downbeat, which is the single most conspicuous
+          // quick movement in this look and the opposite of watchable.
           vec2 par = vec2(sin(uTime * 0.031) * 0.020, cos(uTime * 0.024) * 0.015)
-                   * (0.6 + uLevel * 1.4)
-                   + vec2(uPulse * uPulse * 0.032, uPulse * uPulse * -0.022);
+                   * (0.7 + uSwell * 0.9);
 
           // Nearest blob wins, so overlapping shapes resolve to one surface
           // instead of blending into each other. Evaluated over a 3x3
@@ -1203,25 +1198,30 @@ const FX = {
                       + sin(ang * 3.0 - s2 - uMorph * 0.71) * 0.11
                       + sin(ang * 5.0 + s3 + uMorph * 0.51) * 0.055;
 
-              // Each shape answers on its own offset, so the sheet breathes in
-              // loose sequence rather than as one object.
-              float own = 0.5 + 0.5 * sin(uMorph * 0.8 + hash(id + 3.3) * 6.28);
-              // And each takes its turn at its own point in the bar, so a
-              // wave crosses the field once per bar. This is the part that is
-              // continuous: between downbeats the sheet is still moving, and
-              // moving in time, rather than holding until the next event.
-              // Scaled by level so silence is still, which is the whole
-              // reason the resting size below has no free term of its own.
-              float turn = 0.5 + 0.5 * cos((uBar - hash(id + 7.7)) * 6.28318);
-              // The hit is the downbeat, not every onset. Answering all of
-              // them meant the sheet never finished one response before the
-              // next arrived, so it read as trembling rather than as
-              // breathing. Four times rarer, so it can land half again as
-              // hard and still leave the field settled in between.
+              /* Two clocks, both slow, neither with any connection to the
+                 beat. "own" is how strongly this blob answers the swell at
+                 all, so the sheet opens in loose sequence rather than as one
+                 object; "breathe" is its own inflation, on its own phase, so
+                 the field is always gently alive the way a colony under a
+                 lens is. Both run on the morph clock, which is now slow
+                 enough that you notice a shape has changed rather than
+                 catching it changing.
+
+                 What was here before: the radius jumped on uPulse squared,
+                 and a second term swept a wave across the field once per bar.
+                 Between them the sheet lurched twice a bar, which is the
+                 "too much of a jump" — a blob is a soft body, and soft bodies
+                 do not accelerate. Everything geometric is on the swell now,
+                 and the swell cannot move quickly.
+
+                 The range is smaller too: this used to run to 2.06x its
+                 resting size, and now reaches 1.42x. Size still answers the
+                 music, it just answers it the way bread rises. */
+              float own = 0.5 + 0.5 * sin(uMorph * 0.62 + hash(id + 3.3) * 6.28);
+              float breathe = 0.5 + 0.5 * sin(uMorph * 0.41 + hash(id + 7.7) * 6.28);
               float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
-                        * (0.77 + uSwell * (0.23 + own * 0.26)
-                           + turn * uLevel * 0.15
-                           + uPulse * uPulse * (0.19 + own * 0.46));
+                        * (0.80 + uSwell * (0.20 + own * 0.24)
+                           + breathe * (0.02 + uSwell * 0.16));
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
             }
@@ -1241,6 +1241,21 @@ const FX = {
             col = mix(shot, flat3, step(kind, 0.30));
             // Just inside the cut, a hint of the paper's thickness.
             col *= 1.0 - smoothstep(-cell.x * 0.030, 0.0, bestD) * 0.12;
+
+            /* And a soft light around the inside of each rim, which is where
+               the beat lives — the same trade Ripple's glint made. Light
+               moves nothing, so it can answer every beat there is without
+               costing any of the stillness the geometry above just bought,
+               and a bright edge is what makes a shape read as a globule with
+               a surface rather than as a hole cut in paper.
+
+               Rides the swell as well as the beat, so a beat in a quiet
+               passage is a faint edge and a beat in a loud one is the whole
+               colony lighting up. */
+            float rimD = abs(bestD + cell.x * 0.075) / (cell.x * 0.090);
+            float rim = exp(-rimD * rimD);
+            col += rim * (0.048 + uSwell * 0.085
+                          + uBeat * (0.055 + uSwell * 0.13));
           }
 
           float gr = hash(floor(vUv * uRes / 1.3));

@@ -526,6 +526,40 @@ making it brighter made almost nothing brighter.
 quiet passage and a loud one is the same imbalance the swell was rebuilt to fix, arriving by the
 back door. Measured lift is 5.3 levels when quiet and 10.6 when loud.
 
+### The same thinking, translated to Fields
+
+Fields is blobs forming a silhouette of the picture — clouds, land masses, things under a
+microscope — and it should be *quaint and relaxing, watchable all day*, where Ripple is cool and a
+little edgy. Same three ideas, different constants and a different place to put the light.
+
+**The range expansion is a property of the music, not of a look**, so it is computed once and both
+looks read it. Everything after that is per-look, because a swell of water and a field of blobs want
+very different pacing from the same signal. Fields runs the same immediate-plus-integrator pair on
+roughly triple the constants: it reaches full size over about six seconds and is still two-thirds
+open four seconds after the music drops, where Ripple is nearly back down. "Watchable all day" is
+mostly a statement about time.
+
+Its sustain threshold is *lower* than Ripple's, though. Water can sit flat through an ordinary
+passage; a field of blobs that only wakes up for the loud parts is inert rather than restful.
+
+**Nothing geometric is on the beat any more.** The radius jumped on the squared downbeat and a
+second term swept a wave across the field once per bar — between them the sheet lurched twice a bar.
+A blob is a soft body and soft bodies do not accelerate. The size range came down with it, from
+2.06x its resting size to 1.42x: size still answers the music, it just answers the way bread rises.
+
+**The beat goes into a rim light**, which is Ripple's glint translated. A soft band just inside each
+cutout brightens on the beat — light moves nothing, so it can answer every beat there is without
+costing any stillness, and a bright edge is also what makes a shape read as a globule with a surface
+rather than as a hole cut in paper. Lift measures 4.0 levels when quiet against 15.3 when loud
+before trimming, settling near Ripple's numbers after.
+
+Net: mean on-screen motion **3.86 → 2.12**, spread **0.480 → 0.539**, quiet-to-loud range **7.36x**.
+
+One implementation note worth keeping: the shader is a JavaScript template literal, so a pair of
+backticks inside a *comment* in the GLSL — quoting a variable name, in prose — terminates the string
+and the rest of the shader is parsed as JavaScript. The error surfaces as `Unexpected identifier`
+naming some GLSL variable, and then `FX is not defined`.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It

@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v59 &middot; 6 Aug 2026</p>
+  <p class="ver" id="ver">v60 &middot; 6 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -660,20 +660,20 @@ function updateDrops(dt) {
      is the thing they were moved off. Smoothing the fast side first leaves
      only changes that last longer than a beat, which is what a crescendo is
      and what a snare is not. */
-  rippleDriveSm += (rippleDrive - rippleDriveSm) * (1 - Math.exp(-dt / 0.55));
-  rippleSlow += (rippleDriveSm - rippleSlow) * (1 - Math.exp(-dt / 1.9));
-  const rise = rippleDriveSm - rippleSlow;
+  musicDriveSm += (musicDrive - musicDriveSm) * (1 - Math.exp(-dt / 0.55));
+  rippleSlow += (musicDriveSm - rippleSlow) * (1 - Math.exp(-dt / 1.9));
+  const rise = musicDriveSm - rippleSlow;
   // The refractory is longer than it looks it needs to be, because a rise
   // lasts a second or two rather than an instant: at 0.42s a single crescendo
   // spawned five surges in a bunch. Two or three is a swell arriving; five is
   // a splash.
-  if (rise > 0.10 && rippleDriveSm > 0.20 && time - lastDrop > 0.72) {
+  if (rise > 0.10 && musicDriveSm > 0.20 && time - lastDrop > 0.72) {
     lastDrop = time;
     // Acknowledge the level just reached, so a long crescendo has to climb
     // another step to earn the next surge. Without this the reference chases
     // the level for several seconds after a big rise and keeps firing the
     // whole way up, which turns one swell into a handful of splashes.
-    rippleSlow = rippleDriveSm;
+    rippleSlow = musicDriveSm;
 
     /* Two questions, two answers, and they stay independent.
 
@@ -692,7 +692,7 @@ function updateDrops(dt) {
       y: 0.14 + Math.random() * 0.72,
       age: 0,
       s: Math.max(0.30, Math.min(1, 0.26 + tone * 0.88)),
-      a: Math.max(0.22, Math.min(1, 0.16 + rise * 2.6 + rippleDrive * 0.34))
+      a: Math.max(0.22, Math.min(1, 0.16 + rise * 2.6 + musicDrive * 0.34))
     });
     if (drops.length > 6) drops.shift();
   }
@@ -965,7 +965,9 @@ function drawPoster(dt) {
 
 function drawFX(cfg) {
   FX.render({
-    time, phase: ripplePhase, swell: rippleSwell,
+    // One look renders at a time, so uSwell carries whatever that look's own
+    // envelope is. Fields wants a far slower one than the water does.
+    time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : rippleSwell,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lensShuffle, focus: blurFocus, tone: toneOf(),
@@ -1116,8 +1118,12 @@ let ripplePhase = 0, rippleSwell = 0;
 // The swell's own state: a slow floor and ceiling to measure loudness
 // against, the integrator that grows while a note is held, and the prompt
 // part that answers the moment it arrives.
-let rippleFloor = 0.25, rippleCeil = 0.35, rippleHold = 0, rippleImm = 0,
-    rippleSlow = 0, rippleDrive = 0, rippleDriveSm = 0;
+let musicFloor = 0.25, musicCeil = 0.35, musicDrive = 0, musicDriveSm = 0;
+let rippleHold = 0, rippleImm = 0, rippleSlow = 0;
+// Fields runs the same two stages on much longer constants. Quaint and
+// watchable is mostly a matter of time: nothing here should arrive faster
+// than a cloud changing shape.
+let fieldHold = 0, fieldImm = 0, fieldSwell = 0;
 // Dots' shuffle position. Integrated for the same reason the ripple phase is:
 // uTime * rate jumps every dot to a new step the instant the rate changes.
 let shufflePhase = 0;
@@ -1242,7 +1248,11 @@ function frame(now) {
   // Fields' outlines. Same change as Ripple's, for the same reason: the
   // shapes were being asked to answer something every quarter second, which
   // no amount of smoothing turns into a breath.
-  morphPhase += dt * (0.11 + resp(A.level) * 0.81 + A.pulse * A.pulse * 2.40);
+  // Fields' outlines. No beat term and a much smaller music term than
+  // before: resp() is a twitchy signal to drive a rate with, and multiplying
+  // the rate by a beat made the shapes lurch through a silhouette rather
+  // than drift into one. Slow, and opening only as far as the swell does.
+  morphPhase += dt * (0.052 + fieldSwell * 0.30);
   // Above a floor only, and the beat term is cubed so a weak transient counts
   // for almost nothing while a strong one carries the swap. Below the floor
   // this does not advance at all. Both are needed: with thirty circles on
@@ -1286,8 +1296,12 @@ function frame(now) {
      THE SWELL
 
      Ripple is a swelling of water, not a droplet and its rings, and a swell
-     answers to how loud the music is and for how long — not to beats. Three
-     stages, and each fixes something the previous version got wrong.
+     answers to how loud the music is and for how long — not to beats.
+
+     Stage 1 is a property of the music rather than of any look, so Fields
+     reads it too; each then keeps its own envelope on top, because a swell of
+     water and a field of blobs want very different pacing out of the same
+     signal.
      ===================================================================== */
 
   /* 1. Range. "Quiet reacts too hard and loud does not react hard enough" is
@@ -1303,21 +1317,20 @@ function frame(now) {
      floor drops fast and rises slowly, the ceiling the reverse, so both
      follow the music rather than the last second of it. */
   const lvl = A.level;
-  rippleFloor += ((lvl < rippleFloor ? lvl : rippleFloor) - rippleFloor) *
-                 (1 - Math.exp(-dt / (lvl < rippleFloor ? 0.45 : 14)));
-  rippleCeil += ((lvl > rippleCeil ? lvl : rippleCeil) - rippleCeil) *
-                (1 - Math.exp(-dt / (lvl > rippleCeil ? 0.45 : 20)));
-  const span = Math.max(0.07, rippleCeil - rippleFloor);
-  const pos = Math.min(1, Math.max(0, (lvl - rippleFloor) / span));
+  musicFloor += ((lvl < musicFloor ? lvl : musicFloor) - musicFloor) *
+                (1 - Math.exp(-dt / (lvl < musicFloor ? 0.45 : 14)));
+  musicCeil += ((lvl > musicCeil ? lvl : musicCeil) - musicCeil) *
+               (1 - Math.exp(-dt / (lvl > musicCeil ? 0.45 : 20)));
+  const span = Math.max(0.07, musicCeil - musicFloor);
+  const pos = Math.min(1, Math.max(0, (lvl - musicFloor) / span));
   // Squared, which is the opposite of every other curve here. Quiet should be
-  // most of the way to nothing and loud most of the way to everything, and
-  // the gap between them is the effect.
-  // Squared at the default, and the sensitivity control moves the exponent
-  // rather than multiplying the result: turning it up should let quiet
-  // material open the water further, not clip loud material against a
-  // ceiling it has already reached.
+  // most of the way to nothing and loud most of the way to everything, and the
+  // gap between them is the effect. The sensitivity control moves the exponent
+  // rather than multiplying the result, so turning it up gives quiet material
+  // more room instead of clipping loud material against a ceiling it has
+  // already reached.
   const drive = Math.pow(pos, 2.20 - (gain() - 1) * 0.28) * A.presence;
-  rippleDrive = drive;   // read by updateDrops, which runs earlier in the frame
+  musicDrive = drive;   // read by updateDrops, which runs earlier in the frame
 
   /* 2. Sustain. A held note should keep opening the water, and nothing in the
      previous version could do that — an envelope follower reaches its target
@@ -1340,6 +1353,23 @@ function frame(now) {
   // Both, because they answer different questions: the immediate part is
   // that the music got louder, the held part is that it stayed loud.
   rippleSwell = Math.min(1, rippleImm * 0.58 + rippleHold * 0.62);
+
+  /* The same two stages for Fields, on roughly triple the constants. "Quaint
+     and relaxing, like you could watch it all day" is mostly a statement
+     about time: a blob should change the way a cloud does, which is slowly
+     enough that you never catch it moving, only notice it has moved. The
+     integrator is the part that matters most here — a sheet of shapes that
+     keeps opening through a long passage and settles back over the next one
+     is the whole behaviour, and it is the opposite of answering each beat. */
+  // A lower threshold than Ripple's: water can sit flat through an ordinary
+  // passage, but a field of blobs that only wakes for the loud parts is inert
+  // rather than restful, and restful is the brief.
+  const fFeed = Math.max(0, drive - 0.22);
+  fieldHold = Math.min(1, Math.max(0,
+    fieldHold + dt * (fFeed * 0.34 - fieldHold * 0.17)));
+  fieldImm += (drive - fieldImm) *
+              (1 - Math.exp(-dt / (drive > fieldImm ? 0.90 : 4.20)));
+  fieldSwell = Math.min(1, fieldImm * 0.50 + fieldHold * 0.66);
   armStillIfAsked();
   if (LOOKS[look].fx) {
     drawFX(LOOKS[look]);
