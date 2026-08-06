@@ -82,6 +82,8 @@
   .txt span{ display:block; color:rgba(255,255,255,.5); font-size:12px; line-height:1.4; margin-top:2px; }
   #err{ color:#fda4af; font-size:13px; min-height:1em; max-width:40ch; margin:14px 0 0; }
   .note{ color:rgba(255,255,255,.34); font-size:11.5px; max-width:38ch; margin:16px 0 0; letter-spacing:.01em; }
+  .ver{ color:rgba(255,255,255,.30); font-size:11px; margin:20px 0 0; letter-spacing:.09em;
+        font-variant-numeric:tabular-nums; }
 
   /* now-playing card */
   #np{
@@ -160,6 +162,10 @@
   </div>
   <p id="err"></p>
   <p class="note">Drop an image or a video on the page at any time to use it as the source.</p>
+  <!-- Stamped at build time so there is something to check a deploy against.
+       Left as the placeholder when the page is opened straight from the repo,
+       which the script below turns into a readable label. -->
+  <p class="ver" id="ver">__BUILD__</p>
 </div>
 
 <div id="hud">
@@ -1709,6 +1715,15 @@ function recordClip() {
              RECORD_SECONDS * 1000);
 }
 recBtn.onclick = recordClip;
+
+/* The build stamp is substituted into the markup at build time. Opened
+   straight from the repo it is still the placeholder, so say so rather than
+   showing a row of underscores. Tested for by its leading underscores so that
+   the token itself does not appear here and get substituted too. */
+(() => {
+  const el = document.getElementById('ver');
+  if (el && el.textContent.trim().slice(0, 2) === '__') el.textContent = 'dev build';
+})();
 
 const shotBtn = document.getElementById('shot');
 shotBtn.onclick = () => {
