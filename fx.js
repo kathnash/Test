@@ -1150,9 +1150,19 @@ const FX = {
 
           float aspect = uRes.x / max(uRes.y, 1.0);
           vec2 gp = vec2(uv.x * aspect, uv.y);
-          // Wide, short cells: every shape in the reference is a horizontal
-          // band, far wider than it is tall.
-          vec2 cell = vec2(aspect / 2.1, 1.0 / 5.2);
+          /* Wide, short cells: every shape in the reference is a horizontal
+             band, far wider than it is tall.
+
+             The column count grows with the frame, which it did not before.
+             At a fixed 2.1 columns the cell is as wide as the frame divided
+             by 2.1 however wide the frame is — so a desktop got shapes nearly
+             three times the size of a phone's, filling the sheet and leaving
+             almost none of the paper tone showing. Growing the count keeps a
+             cell about the same absolute size on any screen: 0.267 on a
+             phone against 0.295 on a desktop, where it used to be 0.265
+             against 0.762. */
+          float cols = 2.1 + max(0.0, aspect - 0.56) * 3.2;
+          vec2 cell = vec2(aspect / cols, 1.0 / 5.2);
           vec2 base = floor(gp / cell);
 
           // The photograph inside the cutouts drifts, and only drifts. It used
@@ -1287,16 +1297,11 @@ const FX = {
             // Just inside the cut, a hint of the paper's thickness.
             col *= 1.0 - smoothstep(-cell.x * 0.030, 0.0, bestD) * 0.12;
 
-            /* A whisper of light just inside each rim. This was Ripple's
-               glint translated across, and it was wrong here — it made a
-               feature of something that should not be one, and turned the
-               beat into a main element of a look whose subject is slow
-               shape. What is left is about a fifth of it: enough to give an
-               edge some thickness, not enough to read as an effect. */
-            float rimD = abs(bestD + cell.x * 0.075) / (cell.x * 0.090);
-            float rim = exp(-rimD * rimD);
-            col += rim * (0.012 + uSwell * 0.018
-                          + uBeat * (0.010 + uSwell * 0.026));
+            // A rim light lived here, and it is gone. Translating Ripple's
+            // glint across was wrong twice over: it made a feature of
+            // something that should not be one, and it put the sound onto an
+            // edge, which is the one part of a torn-paper shape that should
+            // look like it was cut once and left alone.
           }
 
           float gr = hash(floor(vUv * uRes / 1.3));

@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v62 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v63 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -1123,7 +1123,7 @@ let rippleHold = 0, rippleImm = 0, rippleSlow = 0;
 // Fields runs the same two stages on much longer constants. Quaint and
 // watchable is mostly a matter of time: nothing here should arrive faster
 // than a cloud changing shape.
-let fieldHold = 0, fieldImm = 0, fieldSwell = 0;
+let fieldHold = 0, fieldImm = 0, fieldSwell = 0, fieldBuild = 0;
 // Dots' shuffle position. Integrated for the same reason the ripple phase is:
 // uTime * rate jumps every dot to a new step the instant the rate changes.
 let shufflePhase = 0;
@@ -1378,10 +1378,25 @@ function frame(now) {
   // rather than restful, and restful is the brief.
   const fFeed = Math.max(0, drive - 0.22);
   fieldHold = Math.min(1, Math.max(0,
-    fieldHold + dt * (fFeed * 0.34 - fieldHold * 0.17)));
+    fieldHold + dt * (fFeed * 0.40 - fieldHold * 0.15)));
   fieldImm += (drive - fieldImm) *
               (1 - Math.exp(-dt / (drive > fieldImm ? 0.90 : 4.20)));
-  fieldSwell = Math.min(1, fieldImm * 0.50 + fieldHold * 0.66);
+
+  /* Beats build. Each one feeds a store that leaks away, so a run of them
+     stacks into a rise instead of each being its own separate nudge — which
+     is what "build" means and what a per-beat impulse cannot express, however
+     it is shaped. Roughly two seconds to stack and two to let go.
+
+     Held notes build harder, and that falls out of the weighting below rather
+     than needing its own machinery: a held note keeps the level up, which is
+     what fieldHold integrates, while producing almost no onsets at all. So
+     a beaty passage moves this mostly through the build term and a sustained
+     one mostly through the hold term — and the hold term is weighted more
+     than twice as heavily, which is what makes a held note the bigger event. */
+  fieldBuild = Math.min(1, Math.max(0,
+    fieldBuild + dt * (A.beat * 0.78 - fieldBuild * 0.45)));
+
+  fieldSwell = Math.min(1, fieldImm * 0.30 + fieldHold * 0.80 + fieldBuild * 0.28);
   armStillIfAsked();
   if (LOOKS[look].fx) {
     drawFX(LOOKS[look]);

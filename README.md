@@ -614,6 +614,33 @@ them. The circles also *pulse in size* with the music, which moves a great many 
 edges regardless of which picture is inside. Classifying each cell by **which picture it is showing**
 and counting the verdict flipping is the measurement that answers the question asked.
 
+#### Fields: the build, and a cell size that was a ratio when it should have been a size
+
+**The rim light is gone**, not dimmed. It had been reduced twice and was still wrong in kind rather
+than degree: it put the sound onto an edge, which is the one part of a torn-paper shape that should
+look cut once and left alone.
+
+**Beats build.** Each one feeds a store that leaks away, so a run of beats stacks into a rise rather
+than each being a separate nudge — which is what "build" means, and what a per-beat impulse cannot
+express however it is shaped. Measured over a beaty passage the swell climbs 0.49 → 0.78 → 0.96
+across nine seconds. *Held* notes build harder, and that falls out of the weighting rather than
+needing its own machinery: a held note keeps the level up, which the sustain integrator measures,
+while producing almost no onsets at all — so a beaty passage moves this mostly through the build
+term and a sustained one mostly through the hold term, which is weighted nearly three times as
+heavily. Rest to fully built changes **34% of the frame**.
+
+**The cell count was a ratio where it needed to be a size.** At a fixed 2.1 columns, a cell is the
+frame width over 2.1 *however wide the frame is* — so a phone got cells 0.265 across and a desktop
+0.762, nearly three times the size. Two symptoms, one cause: the shapes looked far too large on a
+desktop, and the paper tone had nowhere left to show. Measured tone visible on the frame, phone
+against desktop: **42.7% / 13.6%** before, **43.0% / 46.7%** after. Growing the column count with the
+aspect keeps a cell about the same absolute size on any screen.
+
+The coverage metric here is worth distrusting slightly: it counts pixels near the tone colour, and
+the default photograph has a blue background of its own, so some of what it calls paper is picture.
+The direction is far too large to be an artefact, but the absolute percentages are not exact — the
+frozen-time before/after difference is the trustworthy number.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
