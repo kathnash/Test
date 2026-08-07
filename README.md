@@ -676,6 +676,50 @@ coverage" while looking like a tuning problem:
 Measured coverage against the swell: 0%, 0%, 0.1%, 3.9%, 19.2%, 40.6%, **51.9%**. Absent when quiet,
 about half the frame at full swell.
 
+#### Water does not un-splash
+
+The same asymmetry applies to both looks, and it is the clearest single idea in any of this: **an
+impact is visible at once and then dissipates on its own schedule.** Rise and fall are not the same
+question and should not share a constant.
+
+- **Ripple's second reflection** is no longer coupled to the swell at all. Coverage against threshold
+  is steep — a swell of 0.45 to 0.75 moves it from 4% of the frame to 41% — so every wobble in the
+  swell became a large change in area, which is exactly why the franticness came back the moment a
+  second picture was loaded. It is now a store that key moments push up and that only ever comes down
+  slowly, over about seven seconds, to a floor the passage itself holds. Which moments count is
+  already settled: the same band-passed rise that spawns a surge.
+- **Fields** keeps its integrators but the falls are two to three times slower than the rises, and
+  the strike envelope is asymmetric by a factor of twenty five — up in a tenth of a second, down over
+  nearly three.
+
+**A kick has to be followed, not taken.** Pushing the wash instantly is a step, and a step in a
+*threshold* flips a whole region of the frame from one picture to the other inside one frame:
+measured, the worst single-frame change went from 15 to 37. Following it over a fifth of a second
+still reads as immediate and lands as an impact rather than as a cut — peak back to 19.8, with mean
+motion down 13% and its spread up 49% against the version before.
+
+**And a leaky integrator ties its rise rate to its resting level.** Fast in means high equilibrium,
+so the only way to get a quick build was a ceiling four times over the top, and it spent whole
+passages pinned at maximum with no dynamics left. Tapering the feed as the store fills separates the
+two: it climbs at 0.35 a second, settles around 0.8, and still falls on the slow decay term alone.
+
+#### Fields: every shape is a picture
+
+The flat palette shapes are gone. They existed for a real reason, recorded here because it will come
+up again: with a single source and every shape framing the same patch of it, the sheet reads as one
+photograph behind a mask rather than as a collage. The fix is not flat colour but a different
+**view** — each shape now takes its own offset into the picture and its own scale, so neighbours show
+different parts and the sheet reads as cut from many prints.
+
+**The obvious pixels were a `step()`.** Blob coverage was a hard in-or-out test with nothing between,
+which is a staircase along every edge. It is a `smoothstep` over about two and a half pixels now,
+and the width is a single division because the space is scaled so one pixel is `1/uRes.y` along both
+axes.
+
+**And one strike slot was not enough** once a strike was allowed to dissipate slowly: a new one has
+to move the position, and moving it while the previous is still visible makes the surge teleport.
+Two slots, used in turn, let the old one fade where it landed while the next arrives elsewhere.
+
 #### Fields: two kinds of sound need two mechanisms
 
 "I don't really see a reaction that fits the beat you hear." The swell and the build are both broad

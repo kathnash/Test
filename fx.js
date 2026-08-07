@@ -77,7 +77,8 @@ const FX = {
       // Note y runs bottom-up here, as uv does, so a strike at y = 0.2 lands
       // near the bottom of the screen. It only ever has to be somewhere and
       // then somewhere else, so nothing depends on which way up it is.
-      uniform vec3  uStrike;      // x, y in uv; z is the amount, 0 when spent
+      uniform float uWash;        // how far the second reflection has spread
+      uniform vec3  uStrike[2];   // x, y in uv; z is the amount, 0 when spent
       uniform vec3  uPal[5];
       uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
       uniform float uDropAmp[6];   // height, which is a separate question
@@ -441,7 +442,15 @@ const FX = {
                along the waves rather than merely abut. */
             float m = big * 0.72 + h * 2.6;
 
-            /* Coverage is the threshold, and the threshold is the music. At
+            /* Coverage is the threshold, and the threshold is uWash rather
+               than the swell directly. Coverage against threshold is steep —
+               measured, a swell of 0.45 to 0.75 moves it from 4% of the frame
+               to 41% — so every wobble in the swell became a large change in
+               area, which is what brought the franticness back the moment a
+               second picture was loaded. uWash is the same music seen through
+               a much slower lens on the way down.
+
+               At
                rest it sits above anything the field reaches, so the second
                picture is simply absent and the water is clean; at full swell
                it sits just below the middle, so a little over half the frame
@@ -449,7 +458,7 @@ const FX = {
                to grow coverage than growing a shape: the regions arrive by
                appearing along the seams that are already there, rather than
                by swelling outward from points. */
-            float ink = clamp((uSwell - 0.08) / 0.76, 0.0, 1.0);
+            float ink = uWash;
             float thr = mix(2.05, -0.05, ink);
             float edge = 0.030;
             pud = ink <= 0.001 ? 0.0 : smoothstep(thr - edge, thr + edge, m);
@@ -1276,7 +1285,6 @@ const FX = {
           // neighbourhood: testing only the cell a pixel falls in clips every
           // shape at the cell wall, which is what turned Marble into a sliced
           // grid the moment anything grew.
-          float bestIn = 0.0;
           vec2  bestId = base;
           float bestD = 1e9;
           for (int dy = -1; dy <= 1; dy++){
@@ -1349,8 +1357,17 @@ const FX = {
                  passage, while this is tight and brief and answers a hit —
                  and because it is somewhere rather than everywhere, it can be
                  large without the sheet lurching as one body. */
-              vec2 kd = c - vec2(uStrike.x * aspect, uStrike.y);
-              float knear = exp(-dot(kd, kd) / (reach * 0.42));
+              /* Two slots, alternating. One is not enough once a strike is
+                 allowed to dissipate slowly: a new one has to move the
+                 position, and moving it while the old is still visible makes
+                 the surge appear to teleport. With two, the previous can go
+                 on fading where it landed while the next arrives elsewhere,
+                 which is what an impact on water actually looks like. */
+              float knear = 0.0;
+              for (int k = 0; k < 2; k++) {
+                vec2 kd = c - vec2(uStrike[k].x * aspect, uStrike[k].y);
+                knear = max(knear, exp(-dot(kd, kd) / (reach * 0.42)) * uStrike[k].z);
+              }
               float rad = cell.x * (0.360 + hash(id + 5.7) * 0.152) * (1.0 + w)
                         // The focus term is large because it is the only one
                         // that applies to most of the field at any moment: with
@@ -1359,27 +1376,40 @@ const FX = {
                         // move at all. Measured, keeping the old per-shape
                         // amount took total motion from 2.12 to 0.63.
                         * (0.80 + uSwell * (0.14 + near * 0.62 + own * 0.16)
-                           + uStrike.z * knear * 0.52
+                           + knear * 0.58
                            + breathe * (0.045 + uSwell * 0.10));
               float sd = len - rad;                 // <0 inside
-              if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
+              if (sd < bestD) { bestD = sd; bestId = id; }
             }
           }
 
-          if (bestIn > 0.5) {
-            float kind = hash(bestId + 6.6);
-            vec3 shot = pick(uv + par,
-                             uHasTexB > 0.5 ? step(hash(bestId + 2.9), 0.40) : 0.0);
-            // A few shapes are flat colour rather than photograph — the
-            // reference alternates them, and without the flat ones the whole
-            // sheet reads as one picture behind a mask.
-            vec3 flat3 = palAt(int(mod(hash(bestId + 9.4) * 5.0, 5.0)));
-            flat3 = mix(flat3, paper, 0.30);
-            float lm = dot(flat3, vec3(0.299, 0.587, 0.114));
-            flat3 = mix(vec3(lm), flat3, 0.62);
-            col = mix(shot, flat3, step(kind, 0.30));
+          {
+            /* Every shape is a picture now, where before roughly a third were
+               flat palette colour. Those existed for a reason worth recording:
+               with a single source and every shape framing the same patch of
+               it, the sheet reads as one photograph behind a mask rather than
+               as a collage. The fix is not flat colour but a different *view*
+               — each shape gets its own offset into the picture and its own
+               scale, so neighbouring shapes show different parts of it and
+               the sheet reads as cut from many prints. */
+            vec2 vo = (vec2(hash(bestId + 11.0), hash(bestId + 17.0)) - 0.5) * 0.30;
+            float vz = 0.84 + hash(bestId + 23.0) * 0.34;
+            vec2 suv = (uv - 0.5) / vz + 0.5 + par + vo;
+            vec3 shape = pick(suv, uHasTexB > 0.5 ? step(hash(bestId + 2.9), 0.45) : 0.0);
             // Just inside the cut, a hint of the paper's thickness.
-            col *= 1.0 - smoothstep(-cell.x * 0.030, 0.0, bestD) * 0.12;
+            shape *= 1.0 - smoothstep(-cell.x * 0.030, 0.0, bestD) * 0.12;
+
+            /* Feathered, where this used to be step(sd, 0.0) — a hard in-or-
+               out test with nothing between, which is a staircase along every
+               edge and is what the obvious pixels were. The width is set in
+               pixels rather than in the field's own units: gp is scaled so
+               that one pixel is 1/uRes.y along both axes, which makes a
+               screen-space feather a single division. Slightly wider than
+               strict antialiasing would need, because a torn paper edge
+               wants to be a little soft anyway. */
+            float aa = 2.4 / max(uRes.y, 1.0);
+            float cover = 1.0 - smoothstep(-aa, aa, bestD);
+            col = mix(paper, shape, cover);
 
             // A rim light lived here, and it is gone. Translating Ripple's
             // glint across was wrong twice over: it made a feature of
@@ -1426,7 +1456,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uStrike','uPal','uDrops','uDropAmp','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1587,7 +1617,8 @@ const FX = {
     gl.uniform1f(this.u.uBeat, p.beat);
     gl.uniform1f(this.u.uPulse, p.pulse || 0);
     gl.uniform1f(this.u.uBar, p.bar || 0);
-    gl.uniform3f(this.u.uStrike, p.strikeX || 0.5, p.strikeY || 0.5, p.strike || 0);
+    gl.uniform1f(this.u.uWash, p.wash || 0);
+    gl.uniform3fv(this.u.uStrike, p.strikes || new Float32Array(6));
     gl.uniform1f(this.u.uHasTex, this.hasTex);
 
     const pal = new Float32Array(15);

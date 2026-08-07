@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v66 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v67 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -674,6 +674,10 @@ function updateDrops(dt) {
     // the level for several seconds after a big rise and keeps firing the
     // whole way up, which turns one swell into a handful of splashes.
     rippleSlow = musicDriveSm;
+    // The same moment that earns a surge also pushes the second reflection
+    // wider. Immediate, because that is what an impact is; the slow part is
+    // entirely in the coming back.
+    washTarget = Math.min(1, washTarget + 0.26 + rise * 1.5);
 
     /* Two questions, two answers, and they stay independent.
 
@@ -968,7 +972,7 @@ function drawFX(cfg) {
     // One look renders at a time, so uSwell carries whatever that look's own
     // envelope is. Fields wants a far slower one than the water does.
     time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : rippleSwell,
-    strikeX, strikeY, strike: strikeAmt,
+    strikes: strikeBuf, wash: rippleWash,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lensShuffle, focus: blurFocus, tone: toneOf(),
@@ -1120,15 +1124,17 @@ let ripplePhase = 0, rippleSwell = 0;
 // against, the integrator that grows while a note is held, and the prompt
 // part that answers the moment it arrives.
 let musicFloor = 0.25, musicCeil = 0.35, musicDrive = 0, musicDriveSm = 0;
-let rippleHold = 0, rippleImm = 0, rippleSlow = 0;
+let rippleHold = 0, rippleImm = 0, rippleSlow = 0, rippleWash = 0, washTarget = 0;
 // Fields runs the same two stages on much longer constants. Quaint and
 // watchable is mostly a matter of time: nothing here should arrive faster
 // than a cloud changing shape.
 let fieldHold = 0, fieldImm = 0, fieldSwell = 0, fieldBuild = 0;
 // Fields' strike: where the last strong moment landed, how far through
 // its envelope it is, and how hard it hit.
-let strikeX = 0.32, strikeY = 0.68, strikeAge = 9, strikeMag = 0, strikeAmt = 0,
-    lastStrike = -9;
+const strikeX = [0.30, 0.72], strikeY = [0.70, 0.28];
+const strikeAge = [99, 99], strikeMag = [0, 0], strikeAmt = [0, 0];
+const strikeBuf = new Float32Array(6);
+let lastStrike = -9;
 // Dots' shuffle position. Integrated for the same reason the ripple phase is:
 // uTime * rate jumps every dot to a new step the instant the rate changes.
 let shufflePhase = 0;
@@ -1371,6 +1377,25 @@ function frame(now) {
   // that the music got louder, the held part is that it stayed loud.
   rippleSwell = Math.min(1, rippleImm * 0.58 + rippleHold * 0.62);
 
+  /* How far the second reflection has spread. Water does not un-splash: an
+     impact is visible at once and then takes its own time going, whatever the
+     music does next. So this is not an envelope on the level at all — it is a
+     store that key moments push up and that only ever comes down slowly.
+
+     Which moments count is already decided: the same band-passed rise that
+     spawns a surge, which is the detector that stopped Ripple answering every
+     beat. The push happens there. Here it only decays, and only to a floor
+     the passage itself holds up — so a sustained loud section keeps the water
+     open rather than draining while it plays. */
+  washTarget -= dt * washTarget * 0.155;              // about a seven second fall
+  washTarget = Math.min(1, Math.max(washTarget, rippleSwell * 0.52));
+  // Followed over a fifth of a second rather than taken directly. The kick is
+  // a step, and a step in the threshold flips a whole region of the frame from
+  // one picture to the other inside one frame - measured, that took the worst
+  // single-frame change from 15 to 37. A fifth of a second still reads as
+  // immediate and lands it as an impact rather than as a cut.
+  rippleWash += (washTarget - rippleWash) * (1 - Math.exp(-dt / 0.20));
+
   /* The same two stages for Fields, on roughly triple the constants. "Quaint
      and relaxing, like you could watch it all day" is mostly a statement
      about time: a blob should change the way a cloud does, which is slowly
@@ -1381,11 +1406,22 @@ function frame(now) {
   // A lower threshold than Ripple's: water can sit flat through an ordinary
   // passage, but a field of blobs that only wakes for the loud parts is inert
   // rather than restful, and restful is the brief.
+  /* The feed tapers as the store fills, which is what gives this a ceiling
+     of its own rather than one imposed by a clamp. A plain leaky integrator
+     ties its rise rate and its resting level together — fast in means high
+     equilibrium — so the only way to get a quick rise was a level four times
+     over the top, and it spent whole passages pinned at maximum with no
+     dynamics left. With the taper the two are independent: it climbs at 0.35
+     a second and settles around 0.8, and still falls on the slow decay term
+     alone, which is where the asymmetry lives. */
   const fFeed = Math.max(0, drive - 0.22);
   fieldHold = Math.min(1, Math.max(0,
-    fieldHold + dt * (fFeed * 0.40 - fieldHold * 0.15)));
+    fieldHold + dt * (fFeed * 0.45 * (1 - fieldHold) - fieldHold * 0.085)));
+  // Fast in, slow out, and much more so than before: the enlargement should
+  // show the sound plainly while the recession takes its own time. Nine
+  // seconds down against half a second up.
   fieldImm += (drive - fieldImm) *
-              (1 - Math.exp(-dt / (drive > fieldImm ? 0.90 : 4.20)));
+              (1 - Math.exp(-dt / (drive > fieldImm ? 0.55 : 9.0)));
 
   /* Beats build. Each one feeds a store that leaks away, so a run of them
      stacks into a rise instead of each being its own separate nudge — which
@@ -1399,9 +1435,9 @@ function frame(now) {
      one mostly through the hold term — and the hold term is weighted more
      than twice as heavily, which is what makes a held note the bigger event. */
   fieldBuild = Math.min(1, Math.max(0,
-    fieldBuild + dt * (A.beat * 0.78 - fieldBuild * 0.45)));
+    fieldBuild + dt * (A.beat * 1.00 * (1 - fieldBuild) - fieldBuild * 0.21)));
 
-  fieldSwell = Math.min(1, fieldImm * 0.30 + fieldHold * 0.80 + fieldBuild * 0.28);
+  fieldSwell = Math.min(1, fieldImm * 0.28 + fieldHold * 0.62 + fieldBuild * 0.26);
 
   /* And a strike: the beat you actually hear, answered in one place.
 
@@ -1415,22 +1451,42 @@ function frame(now) {
 
      Each lands away from the last, reflected across the frame and jittered so
      it is not a metronome bouncing between two corners. */
-  strikeAge += dt;
-  // Rises over about a quarter second and is spent inside two, so it arrives
-  // as an answer rather than as a step.
-  const kEnv = Math.max(0, strikeAge * 4.2 * Math.exp(1 - strikeAge * 4.2));
-  strikeAmt = kEnv * strikeMag;
-  // Only once the last one has mostly gone, or the position jumps while it is
-  // still visible and the surge appears to teleport.
-  if (A.beatFlash > 0.9 && strikeAmt < 0.25 && musicDriveSm > 0.12 &&
-      time - lastStrike > 0.45) {
+  /* Two strikes, used in turn, each fast in and slow out.
+
+     Water does not un-splash. The impact is visible at once and then
+     dissipates on its own schedule, so the envelope is asymmetric by a factor
+     of twenty five: up in a tenth of a second, down over nearly three. That
+     asymmetry is the whole of what "the recession should be way more chill"
+     asks for, and it is also why there have to be two — a single slot would
+     have to move its position while the previous impact was still visible,
+     and the surge would appear to teleport rather than fade where it landed. */
+  for (let i = 0; i < 2; i++) {
+    strikeAge[i] += dt;
+    const up = 1 - Math.exp(-strikeAge[i] / 0.10);
+    const down = Math.exp(-strikeAge[i] / 2.75);
+    strikeAmt[i] = up * down * strikeMag[i];
+  }
+  const spent = strikeAmt[0] <= strikeAmt[1] ? 0 : 1;
+  // Which sounds earn one: a beat, but only when the passage has some weight
+  // behind it, and never faster than the previous has had time to be seen.
+  if (A.beatFlash > 0.9 && musicDriveSm > 0.12 && time - lastStrike > 0.75 &&
+      strikeAmt[spent] < 0.30) {
     lastStrike = time;
-    strikeAge = 0;
-    strikeX = Math.min(0.86, Math.max(0.14, 1 - strikeX + (Math.random() - 0.5) * 0.36));
-    strikeY = Math.min(0.86, Math.max(0.14, 1 - strikeY + (Math.random() - 0.5) * 0.36));
-    // How hard, from how loud the moment is — so a quiet passage gets a
-    // nudge where a chorus gets a shove.
-    strikeMag = Math.min(1, 0.30 + musicDrive * 0.85);
+    strikeAge[spent] = 0;
+    // Away from wherever the other one is, so the two alternate across the
+    // frame rather than landing on top of each other.
+    const other = 1 - spent;
+    strikeX[spent] = Math.min(0.86, Math.max(0.14,
+      1 - strikeX[other] + (Math.random() - 0.5) * 0.36));
+    strikeY[spent] = Math.min(0.86, Math.max(0.14,
+      1 - strikeY[other] + (Math.random() - 0.5) * 0.36));
+    // How hard, from how loud the moment is.
+    strikeMag[spent] = Math.min(1, 0.34 + musicDrive * 0.90);
+  }
+  for (let i = 0; i < 2; i++) {
+    strikeBuf[i * 3] = strikeX[i];
+    strikeBuf[i * 3 + 1] = strikeY[i];
+    strikeBuf[i * 3 + 2] = strikeAmt[i];
   }
   armStillIfAsked();
   if (LOOKS[look].fx) {
