@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v67 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v68 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -381,7 +381,12 @@ function readStats2() {
   if (!SRC2.width) return;
   try {
     const { lumLo, lumHi, medianNorm } = extractPalette(SRC2);
-    LAYER2.lumLo = lumLo; LAYER2.lumHi = lumHi; LAYER2.medianNorm = medianNorm;
+    // Held apart. A picture of one flat colour returns lumLo === lumHi, and
+    // every look that stretches a range divides by the difference — which is
+    // a division by zero, and a NaN in a colour channel renders as black.
+    LAYER2.lumLo = lumLo;
+    LAYER2.lumHi = Math.max(lumHi, lumLo + 0.02);
+    LAYER2.medianNorm = medianNorm;
   } catch (e) {}
 }
 
@@ -717,7 +722,7 @@ function updateBlobs(dt) {
     b.ph  += dt * (0.030 + b.e * 0.26) * cfg.move;
     b.orb += dt * (0.018 + b.e * 0.14) * cfg.move;
 
-    if (A.beatFlash > 0.9) {
+    if (beatEdge) {
       const ang = Math.random() * Math.PI * 2;
       const p = (0.12 + b.e * 0.42) * G * cfg.kick;
       b.vx += Math.cos(ang) * p;
@@ -971,7 +976,7 @@ function drawFX(cfg) {
   FX.render({
     // One look renders at a time, so uSwell carries whatever that look's own
     // envelope is. Fields wants a far slower one than the water does.
-    time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : rippleSwell,
+    time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : is('Dots') ? dotsSwell : rippleSwell,
     strikes: strikeBuf, wash: rippleWash,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
@@ -1124,6 +1129,7 @@ let ripplePhase = 0, rippleSwell = 0;
 // against, the integrator that grows while a note is held, and the prompt
 // part that answers the moment it arrives.
 let musicFloor = 0.25, musicCeil = 0.35, musicDrive = 0, musicDriveSm = 0;
+let beatEdge = false, pulseEdge = false, prevBeatFlash = 0, prevPulseFlash = 0;
 let rippleHold = 0, rippleImm = 0, rippleSlow = 0, rippleWash = 0, washTarget = 0;
 // Fields runs the same two stages on much longer constants. Quaint and
 // watchable is mostly a matter of time: nothing here should arrive faster
@@ -1146,7 +1152,7 @@ let clusterR = 0, layer2Clock = 0;
 let morphPhase = 0;
 // Lens' picture-swap clock. Deliberately has no constant term, so the grid is
 // perfectly still until there is something to react to.
-let lensShuffle = 0;
+let lensShuffle = 0, dotsSwell = 0;
 // Blur's focus depth. Its own envelope rather than the water swell: quicker,
 // and driven by the whole mix rather than by bass alone.
 let blurFocus = 0;
@@ -1166,6 +1172,20 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now; time += dt;
   A.update(dt);
+
+  /* A rising edge, not a threshold.
+
+     beatFlash is set to 1 on an onset and then decayed by dt * 5.5 inside the
+     same update, so what a frame actually reads on the beat is 1 - dt * 5.5:
+     0.908 at 60fps, 0.890 at 50, 0.817 at 30. Testing it against 0.9 therefore
+     passes only at a full 60fps and silently fails everywhere else — every
+     beat missed on exactly the devices least able to spare the frames. It only
+     ever increases when a beat is detected, so any increase is an edge, and
+     that is true at any frame rate. */
+  beatEdge = A.beatFlash > prevBeatFlash + 1e-6;
+  prevBeatFlash = A.beatFlash;
+  pulseEdge = A.pulseFlash > prevPulseFlash + 1e-6;
+  prevPulseFlash = A.pulseFlash;
 
   // A video keeps changing, so its downscaled copy and everything derived
   // from it are refreshed as new frames arrive. Re-deriving the palette costs
@@ -1254,8 +1274,27 @@ function frame(now) {
   // the phase advance - so even 0.06 turned over a dozen dots a second with
   // nothing playing. Gated above a floor, and the beat term squared so a
   // transient lands as a burst rather than lifting the whole interval.
-  shufflePhase += dt * (Math.max(0, resp(A.level) - 0.30) * 0.55 +
-                        A.beat * A.beat * 3.20);
+  /* Dots, expressed as visible dot changes per second and then divided by
+     the number of dots — the same correction Lens needed, and for the same
+     reason. There are around 280 dots on a phone, each on its own offset, so
+     the fraction turning over in any interval is just the phase advance
+     times the count: the old rate worked out at about 163 dots changing every
+     second, which is not shuffling, it is flickering, and no amount of
+     changing *what* drove it would have read as anything else.
+
+     A floor of 1.3 a second, because a field that stops completely is not
+     what the quiet end should look like — a dot or so a second at rest
+     against ten in a loud passage. */
+  const dotCells = Math.max(60, 13 * 13 / Math.max(0.35, W / H));
+  const dotChanges = 1.3 + musicDrive * 9.0 + A.beat * A.beat * 16.0;
+  shufflePhase += dt * dotChanges / (dotCells * 0.62);
+
+  /* And a size envelope of its own, so a chill passage and a loud one differ
+     in more than how often something moves. Fast up and slow down, the same
+     asymmetry as everywhere else. */
+  const dTarget = musicDrive;
+  dotsSwell += (dTarget - dotsSwell) *
+               (1 - Math.exp(-dt / (dTarget > dotsSwell ? 0.30 : 2.40)));
   // Fields' outlines. Same change as Ripple's, for the same reason: the
   // shapes were being asked to answer something every quarter second, which
   // no amount of smoothing turns into a breath.
@@ -1282,7 +1321,13 @@ function frame(now) {
      rather than merely below a threshold. */
   const lensCircles = Math.max(6, 25 * Math.max(0.4, W / H));
   const CHANGES = 0.487;     // 2p(1-p) at p = 0.42, the odds a re-roll shows
-  const lensSwaps = musicDrive * 0.55 + A.beat * A.beat * A.beat * 0.90;
+  /* How full the spectrum is: low and high content present at the same time,
+     which is roughly what several things playing at once sounds like, and the
+     one of the three suggestions that adds information the level does not
+     already carry. */
+  const fullness = Math.min(1, (Math.min(A.bass, A.mid) + Math.min(A.high, A.air)) * 1.5);
+  const lensSwaps = musicDrive * 0.40 + fullness * 0.26
+                  + A.beat * A.beat * A.beat * 0.75;
   lensShuffle += dt * lensSwaps / (lensCircles * CHANGES);
 
   const focusTarget = Math.min(1, resp(A.level) * 0.60 + resp(A.bass) * 0.30 +
@@ -1469,8 +1514,8 @@ function frame(now) {
   const spent = strikeAmt[0] <= strikeAmt[1] ? 0 : 1;
   // Which sounds earn one: a beat, but only when the passage has some weight
   // behind it, and never faster than the previous has had time to be seen.
-  if (A.beatFlash > 0.9 && musicDriveSm > 0.12 && time - lastStrike > 0.75 &&
-      strikeAmt[spent] < 0.30) {
+  if (beatEdge && musicDriveSm > 0.12 && time - lastStrike > 0.52 &&
+      strikeAmt[spent] < 0.46) {
     lastStrike = time;
     strikeAge[spent] = 0;
     // Away from wherever the other one is, so the two alternate across the

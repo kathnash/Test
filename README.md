@@ -676,6 +676,35 @@ coverage" while looking like a tuning problem:
 Measured coverage against the swell: 0%, 0%, 0.1%, 3.9%, 19.2%, 40.6%, **51.9%**. Absent when quiet,
 about half the frame at full swell.
 
+#### A threshold on a decaying flag is a frame-rate test
+
+`beatFlash` is set to 1 on an onset and then decayed by `dt * 5.5` inside the same update, so what
+a frame actually reads *on the beat* is `1 - dt * 5.5`: **0.908 at 60fps, 0.890 at 50, 0.817 at 30.**
+Testing it against 0.9 therefore passes only at a full 60fps and silently fails everywhere else.
+
+Measured on Fields at 16fps: **0 strikes in twenty seconds** before, 11 after. Its only fast response
+was switched off entirely on any device that could not hold 60fps — which is exactly the report,
+"not really seeming synced to sound, way more than the other effects".
+
+The flag only ever *increases* when a beat is detected, so any increase is an edge, and that is true
+at any frame rate. Worth checking every threshold test against a decaying value for the same fault.
+
+#### Rates that are really counts
+
+Lens needed this and so did Dots: when N things each carry their own offset into a shared clock, the
+visible rate is the phase advance **times N**, and setting the phase advance directly gets it wrong
+twice — once in magnitude, once in how it scales with screen size.
+
+Dots was turning over about **163 dots a second**. That is not shuffling, it is flickering, and no
+change to *what* drove it could have read as anything else. Expressed as visible changes per second
+and divided by the dot count it runs at about ten in a loud passage and one at rest — motion
+**1.70 → 0.60** with its spread up from 0.348 to 0.535, and a quiet-to-loud ratio of **44.8x**.
+
+Dots also gained a size envelope of its own, fast up and slow down, so a chill passage and a loud
+one differ in more than how often something moves. Lens gained a term for how *full* the spectrum is
+— low and high content present at once, which is roughly what several things playing together sounds
+like, and the one signal that adds something the level does not already carry.
+
 #### Water does not un-splash
 
 The same asymmetry applies to both looks, and it is the clearest single idea in any of this: **an

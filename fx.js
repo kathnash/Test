@@ -1162,7 +1162,12 @@ const FX = {
               // The dots pop on the beat as well as reshuffling on it, so the
               // reaction is visible in the frames between one shuffle and the
               // next rather than only at the moment a dot moves.
-              float rr = cell * (0.115 + hash(id + 2.2) * 0.055) * (0.84 + uBeat * 0.46);
+              // Size answers the passage as well as the beat. uSwell here is Dots'
+              // own envelope - fast up, slow down - so a chill stretch has
+              // visibly smaller dots than a loud one rather than the two
+              // differing only in how often something moves.
+              float rr = cell * (0.100 + hash(id + 2.2) * 0.050)
+                       * (0.68 + uSwell * 0.58 + uBeat * uBeat * 0.42);
               float d = length(gp - c);
               float m = (1.0 - smoothstep(rr - aa, rr + aa, d)) * a;
               vec2 dotUv = vec2(c.x / aspect, c.y);
@@ -1245,8 +1250,8 @@ const FX = {
              it has to grow: at the larger resting size a full build covered
              four fifths of a desktop frame and the tone disappeared again at
              exactly the loud moments it should be answering. */
-          float cols = 2.1 + max(0.0, aspect - 0.56) * 2.45;
-          vec2 cell = vec2(aspect / cols, 1.0 / 5.2);
+          float cols = 1.75 + max(0.0, aspect - 0.56) * 1.95;
+          vec2 cell = vec2(aspect / cols, 1.0 / 4.3);
           vec2 base = floor(gp / cell);
 
           // The photograph inside the cutouts drifts, and only drifts. It used
@@ -1368,7 +1373,7 @@ const FX = {
                 vec2 kd = c - vec2(uStrike[k].x * aspect, uStrike[k].y);
                 knear = max(knear, exp(-dot(kd, kd) / (reach * 0.42)) * uStrike[k].z);
               }
-              float rad = cell.x * (0.360 + hash(id + 5.7) * 0.152) * (1.0 + w)
+              float rad = cell.x * (0.375 + hash(id + 5.7) * 0.150) * (1.0 + w)
                         // The focus term is large because it is the only one
                         // that applies to most of the field at any moment: with
                         // a third of the shapes answering instead of all of
@@ -1559,12 +1564,19 @@ const FX = {
     if (!this.ok || !w || !h) return;
     this.pendingB = el; this.pendingBW = w; this.pendingBH = h;
     const gl = this.gl;
+    // Unit 1 explicitly. This bound to whichever unit happened to be active,
+    // which after a render is unit 0 - so loading a second picture briefly
+    // replaced the first one on its own unit. Every render rebinds both, so
+    // it corrected itself within a frame and was invisible; it is still a
+    // texture landing somewhere it was never meant to go.
+    gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.texB);
     try {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
       this.texBAspect = w / h;
       this.hasTexB = 1;
     } catch (e) { this.hasTexB = 0; }
+    gl.activeTexture(gl.TEXTURE0);
   },
 
   render(p) {
