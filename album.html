@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v64 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v65 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -968,6 +968,7 @@ function drawFX(cfg) {
     // One look renders at a time, so uSwell carries whatever that look's own
     // envelope is. Fields wants a far slower one than the water does.
     time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : rippleSwell,
+    strikeX, strikeY, strike: strikeAmt,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lensShuffle, focus: blurFocus, tone: toneOf(),
@@ -1124,6 +1125,10 @@ let rippleHold = 0, rippleImm = 0, rippleSlow = 0;
 // watchable is mostly a matter of time: nothing here should arrive faster
 // than a cloud changing shape.
 let fieldHold = 0, fieldImm = 0, fieldSwell = 0, fieldBuild = 0;
+// Fields' strike: where the last strong moment landed, how far through
+// its envelope it is, and how hard it hit.
+let strikeX = 0.32, strikeY = 0.68, strikeAge = 9, strikeMag = 0, strikeAmt = 0,
+    lastStrike = -9;
 // Dots' shuffle position. Integrated for the same reason the ripple phase is:
 // uTime * rate jumps every dot to a new step the instant the rate changes.
 let shufflePhase = 0;
@@ -1397,6 +1402,36 @@ function frame(now) {
     fieldBuild + dt * (A.beat * 0.78 - fieldBuild * 0.45)));
 
   fieldSwell = Math.min(1, fieldImm * 0.30 + fieldHold * 0.80 + fieldBuild * 0.28);
+
+  /* And a strike: the beat you actually hear, answered in one place.
+
+     The swell and the build are both broad and slow — they say how the
+     passage is going, and nothing about any particular moment in it. That is
+     the whole of what was missing: a strong hit produced no reaction that
+     looked like a reaction to it. This is the other half of the pair, and it
+     works precisely because it is *somewhere* rather than everywhere. A local
+     surge can be large without the sheet moving as one body, which is what
+     made every earlier attempt at a beat response read as a lurch.
+
+     Each lands away from the last, reflected across the frame and jittered so
+     it is not a metronome bouncing between two corners. */
+  strikeAge += dt;
+  // Rises over about a quarter second and is spent inside two, so it arrives
+  // as an answer rather than as a step.
+  const kEnv = Math.max(0, strikeAge * 4.2 * Math.exp(1 - strikeAge * 4.2));
+  strikeAmt = kEnv * strikeMag;
+  // Only once the last one has mostly gone, or the position jumps while it is
+  // still visible and the surge appears to teleport.
+  if (A.beatFlash > 0.9 && strikeAmt < 0.25 && musicDriveSm > 0.12 &&
+      time - lastStrike > 0.45) {
+    lastStrike = time;
+    strikeAge = 0;
+    strikeX = Math.min(0.86, Math.max(0.14, 1 - strikeX + (Math.random() - 0.5) * 0.36));
+    strikeY = Math.min(0.86, Math.max(0.14, 1 - strikeY + (Math.random() - 0.5) * 0.36));
+    // How hard, from how loud the moment is — so a quiet passage gets a
+    // nudge where a chorus gets a shove.
+    strikeMag = Math.min(1, 0.30 + musicDrive * 0.85);
+  }
   armStillIfAsked();
   if (LOOKS[look].fx) {
     drawFX(LOOKS[look]);

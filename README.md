@@ -641,6 +641,35 @@ the default photograph has a blue background of its own, so some of what it call
 The direction is far too large to be an artefact, but the absolute percentages are not exact — the
 frozen-time before/after difference is the trustworthy number.
 
+#### Fields: two kinds of sound need two mechanisms
+
+"I don't really see a reaction that fits the beat you hear." The swell and the build are both broad
+and slow — between them they say how a *passage* is going and nothing at all about any particular
+moment in it. That was the whole gap, and no amount of tuning either one closes it, because neither
+is the kind of thing a hit is.
+
+**A strike is the other half of the pair.** A strong moment lands in one place, rises over about a
+quarter second and is spent inside two. It works *because* it is somewhere rather than everywhere: a
+local surge can be large without the sheet moving as one body, which is what made every earlier
+attempt at a beat response read as a lurch. Each lands away from the last — reflected across the
+frame and jittered, so it is not a metronome bouncing between two corners. Measured, one strike
+changes 9–12% of the frame and the change follows where it is aimed.
+
+**Its position is passed in from the CPU rather than derived per pixel.** The value is read inside
+the nine-neighbour loop, and anything that must be right per *shape* rather than per pixel costs nine
+times what it looks like — deriving it from the drop array would have been six exponentials times
+nine neighbours per pixel.
+
+**Resting size and room to grow are different questions.** Raising the resting radius to make the
+shapes larger took a full build to four fifths of a desktop frame, so the paper tone vanished at
+exactly the loud moments it should be answering. Trimming the resting radius while raising the swell
+term gives the same shapes more travel: rest-to-built coverage went from +1.6 to **+8.5** points on a
+phone and +6.9 to **+17.1** on a desktop, with the two resting sizes now within a point of each other
+(53.5% and 54.5%).
+
+Net: motion **0.25 → 0.66** with spread **0.308 → 0.688** — two and a half times as much movement,
+arriving far more as events than as drift, with the idle in silence untouched at 0.62.
+
 #### Ripple's ink: shear is what makes a thread
 
 The second picture arrived as one drop in the middle of the frame growing into a lobed blob. It is

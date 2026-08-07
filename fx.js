@@ -69,6 +69,15 @@ const FX = {
       // wants to flow with the music rather than react to it has a
       // continuous, tempo-locked ramp to ride.
       uniform float uPulse, uBar;
+      // Where a strong moment just landed, and how much of it is left. Kept
+      // on the CPU and passed in, rather than derived per pixel from the drop
+      // array: this is read inside a nine-neighbour loop, and anything that
+      // has to be right per *shape* rather than per pixel costs nine times
+      // what it looks like.
+      // Note y runs bottom-up here, as uv does, so a strike at y = 0.2 lands
+      // near the bottom of the screen. It only ever has to be somewhere and
+      // then somewhere else, so nothing depends on which way up it is.
+      uniform vec3  uStrike;      // x, y in uv; z is the amount, 0 when spent
       uniform vec3  uPal[5];
       uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
       uniform float uDropAmp[6];   // height, which is a separate question
@@ -1205,10 +1214,18 @@ const FX = {
              by 2.1 however wide the frame is — so a desktop got shapes nearly
              three times the size of a phone's, filling the sheet and leaving
              almost none of the paper tone showing. Growing the count keeps a
-             cell about the same absolute size on any screen: 0.267 on a
-             phone against 0.295 on a desktop, where it used to be 0.265
-             against 0.762. */
-          float cols = 2.1 + max(0.0, aspect - 0.56) * 3.2;
+             cell roughly the same size on any screen. At 3.2 it overshot and
+             desktop cells came out smaller than a phone's in practice; 2.15
+             lands them a little larger, which is what a wider frame wants.
+             Phone 0.267, desktop 0.345, against 0.265 and 0.762 before any
+             of this.
+
+             The resting radius is trimmed slightly against that, because
+             what matters is not only how large a shape is but how much room
+             it has to grow: at the larger resting size a full build covered
+             four fifths of a desktop frame and the tone disappeared again at
+             exactly the loud moments it should be answering. */
+          float cols = 2.1 + max(0.0, aspect - 0.56) * 2.45;
           vec2 cell = vec2(aspect / cols, 1.0 / 5.2);
           vec2 base = floor(gp / cell);
 
@@ -1315,14 +1332,23 @@ const FX = {
               // everyone so the rest of the sheet is not simply switched off.
               vec2 fd = c - focus;
               float near = exp(-dot(fd, fd) / reach);
-              float rad = cell.x * (0.355 + hash(id + 5.7) * 0.155) * (1.0 + w)
+              /* And how near this shape is to where a strong moment just
+                 landed. This is the separation between the two kinds of
+                 sound: the swell above is broad and slow and answers a
+                 passage, while this is tight and brief and answers a hit —
+                 and because it is somewhere rather than everywhere, it can be
+                 large without the sheet lurching as one body. */
+              vec2 kd = c - vec2(uStrike.x * aspect, uStrike.y);
+              float knear = exp(-dot(kd, kd) / (reach * 0.42));
+              float rad = cell.x * (0.360 + hash(id + 5.7) * 0.152) * (1.0 + w)
                         // The focus term is large because it is the only one
                         // that applies to most of the field at any moment: with
                         // a third of the shapes answering instead of all of
                         // them, each has to answer further for the sheet to
                         // move at all. Measured, keeping the old per-shape
                         // amount took total motion from 2.12 to 0.63.
-                        * (0.80 + uSwell * (0.12 + near * 0.50 + own * 0.14)
+                        * (0.80 + uSwell * (0.14 + near * 0.62 + own * 0.16)
+                           + uStrike.z * knear * 0.52
                            + breathe * (0.045 + uSwell * 0.10));
               float sd = len - rad;                 // <0 inside
               if (sd < bestD) { bestD = sd; bestId = id; bestIn = step(sd, 0.0); }
@@ -1389,7 +1415,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uPal','uDrops','uDropAmp','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uStrike','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1550,6 +1576,7 @@ const FX = {
     gl.uniform1f(this.u.uBeat, p.beat);
     gl.uniform1f(this.u.uPulse, p.pulse || 0);
     gl.uniform1f(this.u.uBar, p.bar || 0);
+    gl.uniform3f(this.u.uStrike, p.strikeX || 0.5, p.strikeY || 0.5, p.strike || 0);
     gl.uniform1f(this.u.uHasTex, this.hasTex);
 
     const pal = new Float32Array(15);
