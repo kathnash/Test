@@ -641,6 +641,41 @@ the default photograph has a blue background of its own, so some of what it call
 The direction is far too large to be an artefact, but the absolute percentages are not exact — the
 frozen-time before/after difference is the trustworthy number.
 
+#### Two reflections on one surface
+
+Three reference photographs of water carrying two reflections at once, and all three share a
+mechanism: **the surface decides which picture you see at each point.** Large flowing regions of
+each, roughly half and half, with a pale warm seam where they meet. They differ only in how tightly
+the threshold is set — one gives big lobes, one gives undulating bands, and one sets it so tight
+that the second reflection survives as thin ribbons along the crests.
+
+What was there instead was ink sitting *on* the water, and that is area-limited by construction: a
+handful of sources can only cover a handful of patches, so asking for more coverage means more or
+bigger drops until it stops looking like water and starts looking like spots. Thresholding the
+surface gives whole-frame coverage for nothing, and gives boundaries that flow because they *are*
+the water. It is also cheaper — with two pictures loaded the look now costs 143.8ms against 143.5ms
+with one, where the drops cost 155.8ms.
+
+Three things had to be right, and two of them were wrong in ways that measured as "almost no
+coverage" while looking like a tuning problem:
+
+- **A thresholded field wants a known middle.** Half coverage is the threshold at the middle of the
+  field's distribution, and a sum of sines is centred on zero by construction where fbm is centred
+  wherever it happens to be. On noise, the setting that should have given half the frame gave 13% of
+  it and nothing at all below three quarters of a swell.
+- **Frequencies are chosen against the frame, not in the abstract.** A "low" frequency of 2 sounds
+  like large regions and in fact gives none: it completes a third of a cycle across the picture, so
+  what is visible is one slice of one sine and its distribution over the frame has nothing to do
+  with its distribution in general. About one cycle across the frame is a handful of regions, which
+  is the scale the photographs have.
+- **The intricacy comes from the water.** A seam decided by a smooth field is a smooth curve
+  dividing the frame in two, where every reference has a convoluted boundary throwing off islands
+  and peninsulas. Weighting the wave height heavily — the same field that displaces the picture — is
+  what makes the two reflections band along the crests rather than merely abut.
+
+Measured coverage against the swell: 0%, 0%, 0.1%, 3.9%, 19.2%, 40.6%, **51.9%**. Absent when quiet,
+about half the frame at full swell.
+
 #### Fields: two kinds of sound need two mechanisms
 
 "I don't really see a reaction that fits the beat you hear." The swell and the build are both broad

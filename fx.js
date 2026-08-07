@@ -384,75 +384,77 @@ const FX = {
           float amt = 0.0068 + uSwell * 0.0275;
           vec2 off = grad * amt;
 
-          // A puddle of the second picture, spreading with the music. Its
-          // radius rides the same slow envelope the water depth does, so it
-          // swells rather than flickering with the band, and its edge is
-          // displaced by the surface height — so it reads as something lying
-          // in the water rather than a shape laid over it.
+          /* The two pictures interleaved by the water itself, which is what
+             a reflection of two things on a rippling surface actually looks
+             like: large flowing regions of each, roughly half and half, with
+             a bright edge where they meet.
+
+             This replaces a marbled drop, and the drop was the wrong shape of
+             idea rather than the wrong settings. Ink sitting *on* the water
+             is area-limited by construction — a handful of sources can only
+             ever cover a handful of patches, so asking for more coverage
+             means more or bigger drops, and the result stops looking like
+             water and starts looking like spots. Letting the surface decide
+             which picture shows at each point gives whole-frame coverage for
+             nothing, and gives it boundaries that flow because they *are* the
+             water.
+
+             The deciding field is mostly a slow, large-scale noise, with the
+             wave height mixed in at about half its weight. That split is what
+             sets the character: the large scale makes regions the size of a
+             third of the frame rather than fine banding, and the height field
+             then corrugates their edges so they undulate along the waves. */
           float pud = 0.0;
+          float shore = 0.0;              // brightness along the seam
           if (uHasTexB > 0.5) {
-            /* Marbling, not a puddle. It was one drop in the middle of the
-               frame growing into a lobed blob; this is several, arriving in
-               different places and at different moments, drawn out into
-               threads by a shared flow.
-
-               What makes it stringy is shear, not warp. An isotropic noise
-               warp at low frequency simply *moves* a blob — the field barely
-               changes across something the size of a drop, so the whole drop
-               slides intact — and at high frequency it only roughens the
-               edge. Neither stretches anything. Displacement along x that
-               varies with y does: it drags the near side of a shape past the
-               far side, which is exactly how a comb pulls marbling into
-               threads. The sources are flattened to start with, so what gets
-               dragged is already a ribbon.
-
-               The sources are staggered against the ink so they do not all
-               open together: the first is in almost as soon as there is any,
-               the last only in a full swell. That is the "different spots at
-               different times" — dropping four points at one instant reads as
-               a pattern, and dropping them across a phrase reads as ink. */
             float ar2 = uRes.x / max(uRes.y, 1.0);
             vec2 P = vec2(uv.x * ar2, uv.y);
-            float ink = clamp((uSwell - 0.10) / 0.74, 0.0, 1.0);
+            /* A sum of sines rather than noise, and the reason is arithmetic
+               rather than taste: this field is thresholded, so the *middle*
+               of its distribution is the setting that gives half coverage,
+               and a sum of sines is centred on zero by construction where
+               fbm is centred wherever it happens to be. Built on noise, the
+               threshold that should have given half the frame gave 13% of it
+               and nothing at all below three quarters of a swell.
 
-            // Two scales of shear along x, both varying with y, plus a much
-            // smaller one across so the threads are not perfectly horizontal.
-            float sh = (fbm(vec2(P.y * 6.5, uTime * 0.021)) - 0.5)
-                         * (0.16 + ink * 0.52)
-                     + (fbm(vec2(P.y * 15.0 + 7.0, uTime * 0.017)) - 0.5)
-                         * (0.05 + ink * 0.17);
-            float sv = (fbm(vec2(P.x * 5.0 + 31.0, uTime * 0.019)) - 0.5)
-                         * (0.04 + ink * 0.10);
-            vec2 Q = P + vec2(sh, sv);
+               Four incommensurate frequencies, chosen against the frame
+               rather than in the abstract. A "low" frequency of 2 sounds like
+               it gives large regions and in fact gives *none*: it completes a
+               third of a cycle across the picture, so what you see is one
+               slice of one sine and the field's distribution over the visible
+               area has nothing to do with its distribution in general. These
+               run about one cycle across the frame, which is a handful of
+               regions — the scale the reference photographs have. */
+            float big = sin(P.x * 7.5 + uTime * 0.050) * 0.42
+                      + sin(P.y * 5.9 - uTime * 0.041) * 0.40
+                      + sin((P.x + P.y) * 4.6 + uTime * 0.033) * 0.34
+                      + sin((P.x - P.y) * 9.1 - uTime * 0.027) * 0.26
+                      + sin(P.y * 14.0 + uTime * 0.061) * 0.15
+                      + sin((P.x * 1.7 - P.y) * 17.0 - uTime * 0.044) * 0.11;
+            /* The wave height carries most of the weight, not a little of it.
+               A seam decided almost entirely by a smooth field is a smooth
+               curve — one big lobe dividing the frame — where every reference
+               photograph has a convoluted boundary that throws off islands
+               and peninsulas and runs along the crests. That intricacy comes
+               from the water: h is the same field that displaces the picture,
+               so weighting it heavily is what makes the two reflections band
+               along the waves rather than merely abut. */
+            float m = big * 0.72 + h * 2.6;
 
-            for (int i = 0; i < 4; i++) {
-              float fi = float(i);
-              vec2 seed = vec2(fi * 3.7 + 1.0, fi * 1.9 + 5.0);
-              // Its own share of the swell, so they come in one after another.
-              float li = clamp((ink - fi * 0.155) / 0.50, 0.0, 1.0);
-              vec2 c = vec2(ar2 * (0.20 + 0.60 * hash(seed))
-                              + sin(uTime * 0.034 + fi * 2.1) * ar2 * 0.06,
-                            0.18 + 0.64 * hash(seed + 9.0)
-                              + cos(uTime * 0.028 + fi * 1.7) * 0.06);
-              // Flattened hard, so a source is a ribbon before anything drags
-              // it and a thread after.
-              vec2 d = Q - c;
-              d.y *= 5.2;
-              /* Pinched along its length. A ribbon of even thickness reads as
-                 a lozenge however much it is bent — what makes ink look like
-                 ink is that it runs thick in places and almost breaks in
-                 others, so one source becomes a strand and a couple of
-                 wisps. Two sines rather than noise: this is inside the source
-                 loop, so it runs four times a pixel. */
-              float pinch = 0.58 + 0.52 * sin(Q.x * 12.0 + fi * 2.7 + uTime * 0.05)
-                                        * sin(Q.y * 7.5 - fi * 1.9);
-              float rad = (0.058 + hash(seed + 4.0) * 0.055)
-                        * (0.30 + li * 1.50) * pinch;
-              // Union, so overlapping sources merge into one body of ink the
-              // way they do on water, rather than cross-fading into a haze.
-              pud = max(pud, li <= 0.001 ? 0.0
-                   : 1.0 - smoothstep(rad * 0.80, rad, length(d) + h * 0.014));
-            }
+            /* Coverage is the threshold, and the threshold is the music. At
+               rest it sits above anything the field reaches, so the second
+               picture is simply absent and the water is clean; at full swell
+               it sits just below the middle, so a little over half the frame
+               is the second picture. Moving a threshold is a far better way
+               to grow coverage than growing a shape: the regions arrive by
+               appearing along the seams that are already there, rather than
+               by swelling outward from points. */
+            float ink = clamp((uSwell - 0.08) / 0.76, 0.0, 1.0);
+            float thr = mix(2.05, -0.05, ink);
+            float edge = 0.030;
+            pud = ink <= 0.001 ? 0.0 : smoothstep(thr - edge, thr + edge, m);
+            float dd = (m - thr) / edge;
+            shore = ink <= 0.001 ? 0.0 : exp(-dd * dd * 2.6);
           }
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -504,6 +506,15 @@ const FX = {
                                         + uBeat * (0.42 + uSwell * 0.88));
           float pk = max(col.r, max(col.g, col.b));
           col += glint * mix(vec3(1.0), col / max(pk, 0.04), 0.45);
+
+          /* The seam. Every one of the reference photographs has it — a pale,
+             slightly warm line wherever one reflection gives way to the
+             other, which is the specular catch along the crest that separates
+             them. Without it the two pictures merely abut and the result
+             reads as a collage; with it they read as one surface carrying
+             both. Warm rather than white, and scaled by the swell so it
+             arrives with the second picture rather than before it. */
+          col += shore * (0.07 + uSwell * 0.19) * vec3(1.0, 0.965, 0.905);
         }
 
         // ================================================================
