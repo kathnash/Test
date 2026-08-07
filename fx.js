@@ -382,33 +382,68 @@ const FX = {
           // in the water rather than a shape laid over it.
           float pud = 0.0;
           if (uHasTexB > 0.5) {
+            /* Marbling, not a puddle. It was one drop in the middle of the
+               frame growing into a lobed blob; this is several, arriving in
+               different places and at different moments, drawn out into
+               threads by a shared flow.
+
+               What makes it stringy is shear, not warp. An isotropic noise
+               warp at low frequency simply *moves* a blob — the field barely
+               changes across something the size of a drop, so the whole drop
+               slides intact — and at high frequency it only roughens the
+               edge. Neither stretches anything. Displacement along x that
+               varies with y does: it drags the near side of a shape past the
+               far side, which is exactly how a comb pulls marbling into
+               threads. The sources are flattened to start with, so what gets
+               dragged is already a ribbon.
+
+               The sources are staggered against the ink so they do not all
+               open together: the first is in almost as soon as there is any,
+               the last only in a full swell. That is the "different spots at
+               different times" — dropping four points at one instant reads as
+               a pattern, and dropping them across a phrase reads as ink. */
             float ar2 = uRes.x / max(uRes.y, 1.0);
-            vec2 pc = vec2(ar2 * 0.5 + sin(uTime * 0.037) * ar2 * 0.10,
-                           0.5 + cos(uTime * 0.029) * 0.09);
-            vec2 pd = vec2(uv.x * ar2, uv.y) - pc;
-            // Ink dropped in water, not a wobbly disc. The sample position
-            // is warped by noise before its distance is measured — domain
-            // warping, which is what turns a circle into a plume with
-            // fingers, where modulating the radius by angle only ever gives
-            // a lumpy circle. The fingers lengthen away from the centre
-            // because the warp is scaled by distance, the way a drop trails
-            // as it spreads.
-            // Nothing at all below a threshold, so quiet leaves the water
-            // clean. Above it the drop arrives small and spreads.
-            float ink = clamp((uSwell - 0.12) / 0.72, 0.0, 1.0);
-            float prad = ink * 0.30;
-            vec2 wq = pd * 5.0 + vec2(uTime * 0.055, uTime * -0.042);
-            float n1 = fbm(wq);
-            float n2 = fbm(wq * 1.7 + 19.0);
-            float reach = clamp(length(pd) / max(prad, 0.001), 0.0, 1.6);
-            // The warp keeps a floor while the radius does not, so on the way
-            // down the noise stops being a perturbation of a disc and becomes
-            // most of the shape — it breaks into wisps and disperses instead
-            // of shrinking as a solid blob.
-            float warp = prad * (0.42 + reach * 0.80) + 0.028 * sqrt(ink);
-            vec2 warped = pd + (vec2(n1, n2) - 0.5) * warp;
-            pud = (ink <= 0.001) ? 0.0
-                : 1.0 - smoothstep(prad * 0.80, prad, length(warped) + h * 0.016);
+            vec2 P = vec2(uv.x * ar2, uv.y);
+            float ink = clamp((uSwell - 0.10) / 0.74, 0.0, 1.0);
+
+            // Two scales of shear along x, both varying with y, plus a much
+            // smaller one across so the threads are not perfectly horizontal.
+            float sh = (fbm(vec2(P.y * 6.5, uTime * 0.021)) - 0.5)
+                         * (0.16 + ink * 0.52)
+                     + (fbm(vec2(P.y * 15.0 + 7.0, uTime * 0.017)) - 0.5)
+                         * (0.05 + ink * 0.17);
+            float sv = (fbm(vec2(P.x * 5.0 + 31.0, uTime * 0.019)) - 0.5)
+                         * (0.04 + ink * 0.10);
+            vec2 Q = P + vec2(sh, sv);
+
+            for (int i = 0; i < 4; i++) {
+              float fi = float(i);
+              vec2 seed = vec2(fi * 3.7 + 1.0, fi * 1.9 + 5.0);
+              // Its own share of the swell, so they come in one after another.
+              float li = clamp((ink - fi * 0.155) / 0.50, 0.0, 1.0);
+              vec2 c = vec2(ar2 * (0.20 + 0.60 * hash(seed))
+                              + sin(uTime * 0.034 + fi * 2.1) * ar2 * 0.06,
+                            0.18 + 0.64 * hash(seed + 9.0)
+                              + cos(uTime * 0.028 + fi * 1.7) * 0.06);
+              // Flattened hard, so a source is a ribbon before anything drags
+              // it and a thread after.
+              vec2 d = Q - c;
+              d.y *= 5.2;
+              /* Pinched along its length. A ribbon of even thickness reads as
+                 a lozenge however much it is bent — what makes ink look like
+                 ink is that it runs thick in places and almost breaks in
+                 others, so one source becomes a strand and a couple of
+                 wisps. Two sines rather than noise: this is inside the source
+                 loop, so it runs four times a pixel. */
+              float pinch = 0.58 + 0.52 * sin(Q.x * 12.0 + fi * 2.7 + uTime * 0.05)
+                                        * sin(Q.y * 7.5 - fi * 1.9);
+              float rad = (0.058 + hash(seed + 4.0) * 0.055)
+                        * (0.30 + li * 1.50) * pinch;
+              // Union, so overlapping sources merge into one body of ink the
+              // way they do on water, rather than cross-fading into a haze.
+              pud = max(pud, li <= 0.001 ? 0.0
+                   : 1.0 - smoothstep(rad * 0.80, rad, length(d) + h * 0.014));
+            }
           }
 
           // Chromatic dispersion keeps it reading as refraction, not blur.
@@ -446,8 +481,20 @@ const FX = {
              beat in a loud one is the water flashing. A beat that hits just
              as hard either way is the same imbalance the swell was rebuilt to
              fix, arriving by the back door. */
-          col += pow(cr, 4.5) * (0.05 + uLevel * 0.07 + uSwell * 0.20
-                              + uBeat * (0.40 + uSwell * 0.85));
+          /* Tinted toward whatever it is falling on, rather than added flat.
+             Adding the same amount to all three channels raises brightness
+             and lowers saturation together, which is why a strong glint was
+             dulling the colour of the picture underneath — a red petal went
+             pale rather than bright. Carrying part of the local hue means the
+             highlight can stay as strong while taking much less colour out.
+             Part, not all: a real specular is whiter than what it lands on.
+             The amount itself comes down only slightly — the tint is doing
+             most of the work, so the glint keeps nearly all its impact while
+             taking half as much colour out of the picture. */
+          float glint = pow(cr, 4.5) * (0.048 + uLevel * 0.070 + uSwell * 0.19
+                                        + uBeat * (0.42 + uSwell * 0.88));
+          float pk = max(col.r, max(col.g, col.b));
+          col += glint * mix(vec3(1.0), col / max(pk, 0.04), 0.45);
         }
 
         // ================================================================

@@ -641,6 +641,37 @@ the default photograph has a blue background of its own, so some of what it call
 The direction is far too large to be an artefact, but the absolute percentages are not exact — the
 frozen-time before/after difference is the trustworthy number.
 
+#### Ripple's ink: shear is what makes a thread
+
+The second picture arrived as one drop in the middle of the frame growing into a lobed blob. It is
+now several, opening in different places and at different moments — each source takes its own share
+of the swell, so the first is in almost as soon as there is any ink and the last only in a full one.
+Dropping them all at one instant reads as a pattern; dropping them across a phrase reads as ink.
+
+**A domain warp does not stretch anything, and that took two attempts to see.** At low frequency the
+noise field barely changes across something the size of a drop, so the whole drop slides along
+intact. At high frequency it only roughens the edge. What draws ink into threads is *shear*:
+displacement along x that varies with y, dragging the near side of a shape past the far side, which
+is what a comb does to marbling. The sources are also flattened 5:1 before anything drags them, so
+what gets sheared is already a ribbon.
+
+**And a ribbon of even thickness is a lozenge however much it is bent.** What makes ink look like
+ink is running thick in places and almost breaking in others, so a length-wise pinch turns one
+source into a strand and a couple of wisps. Two sines rather than noise, since it runs inside the
+per-source loop.
+
+Cost with a second picture loaded is 155.8ms against 150.8ms with one — the whole block sits behind
+a uniform branch, so single-picture use pays nothing.
+
+#### A highlight that brightens without dulling
+
+"It sometimes dulls the colour impact of the image." Adding the same amount to all three channels
+raises brightness and lowers saturation *together* — a red petal goes pale rather than bright. So
+rather than only turning it down, the glint is tinted toward whatever it lands on (45% of the way,
+since a real specular is whiter than its surface). Measured on a beat: brightness lift **8.42 →
+6.71** levels while the saturation cost went **4.06 → 2.32** points. Twenty percent less bright,
+forty-three percent less dulling.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
