@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v61 &middot; 6 Aug 2026</p>
+  <p class="ver" id="ver">v62 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -1253,14 +1253,26 @@ function frame(now) {
   // the rate by a beat made the shapes lurch through a silhouette rather
   // than drift into one. Slow, and opening only as far as the swell does.
   morphPhase += dt * (0.052 + fieldSwell * 0.30);
-  // Above a floor only, and the beat term is cubed so a weak transient counts
-  // for almost nothing while a strong one carries the swap. Below the floor
-  // this does not advance at all. Both are needed: with thirty circles on
-  // thirty different offsets, the fraction that change over any interval is
-  // just the phase advance, so a rate that looks tiny on paper still turns a
-  // circle over every second or so across the whole grid.
-  lensShuffle += dt * (Math.max(0, resp(A.level) - 0.45) * 0.40 +
-                       A.beat * A.beat * A.beat * 1.20);
+  /* Lens trades pictures between circles. Each circle re-rolls its choice
+     once per unit of this clock, on its own offset, so what you actually see
+     is the phase advance times the number of circles — and only about half of
+     those re-rolls land on the other picture and are visible at all.
+
+     Both halves of that were wrong. The rate was set by eye against a phone
+     and the grid is five rows by however many columns the aspect gives, so a
+     desktop carries forty circles where a phone carries fourteen and shuffled
+     three times as fast for the same setting. And it was simply too quick:
+     measured, one circle turned over every 0.2s.
+
+     So the rate is expressed as the thing that matters — visible swaps per
+     second — and divided back out by the circle count, which makes the pace
+     the same on any screen. musicDrive rather than resp(): the same
+     range-expanded signal the swells use, so quiet is genuinely near nothing
+     rather than merely below a threshold. */
+  const lensCircles = Math.max(6, 25 * Math.max(0.4, W / H));
+  const CHANGES = 0.487;     // 2p(1-p) at p = 0.42, the odds a re-roll shows
+  const lensSwaps = musicDrive * 0.55 + A.beat * A.beat * A.beat * 0.90;
+  lensShuffle += dt * lensSwaps / (lensCircles * CHANGES);
 
   const focusTarget = Math.min(1, resp(A.level) * 0.60 + resp(A.bass) * 0.30 +
                                   A.beat * 0.32);

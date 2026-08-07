@@ -591,6 +591,29 @@ when the room goes quiet.
 Net for Fields: motion **3.86 → 0.79**, quiet-to-loud range **4.37x**, frame cost down from 140ms to
 122ms.
 
+### Lens: state the rate as the thing you can see
+
+Circles trade pictures on a shuffle clock. Each re-rolls its choice once per unit of that clock on
+its own offset, and only about half of those re-rolls land on the other picture — so what is
+actually visible is `rate x circles x 0.487`, not the rate. Setting the rate directly gets both
+parts wrong.
+
+**It was far too fast**: one circle turning over every **0.4s**, where the intent was something you
+notice rather than something you watch. Now one every **2.1s** at full loudness, and effectively
+never when quiet — `musicDrive` rather than `resp()`, so the quiet end is genuinely near zero
+instead of merely under a threshold.
+
+**And it depended on the screen.** The grid is five rows by however many columns the aspect gives,
+so a desktop carries about forty circles where a phone carries fourteen — the same setting shuffled
+three times as often on a desktop. The rate is now expressed as visible swaps per second and divided
+back out by the circle count, which is a number the page already knows.
+
+A measurement note, because the first attempt was wrong in a way that looked plausible: counting
+"cells that changed a lot" reported swaps four times faster than the clock could possibly produce
+them. The circles also *pulse in size* with the music, which moves a great many pixels at their
+edges regardless of which picture is inside. Classifying each cell by **which picture it is showing**
+and counting the verdict flipping is the measurement that answers the question asked.
+
 ### Cyanotype: the process is a state, not a cycle
 
 The first version put the process on a clock — `cyanoCycle` advanced with the music and wrapped. It
