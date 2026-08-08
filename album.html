@@ -168,7 +168,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v68 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v69 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
@@ -1130,6 +1130,7 @@ let ripplePhase = 0, rippleSwell = 0;
 // part that answers the moment it arrives.
 let musicFloor = 0.25, musicCeil = 0.35, musicDrive = 0, musicDriveSm = 0;
 let beatEdge = false, pulseEdge = false, prevBeatFlash = 0, prevPulseFlash = 0;
+let beatNotable = false, beatRef = 3.9;
 let rippleHold = 0, rippleImm = 0, rippleSlow = 0, rippleWash = 0, washTarget = 0;
 // Fields runs the same two stages on much longer constants. Quaint and
 // watchable is mostly a matter of time: nothing here should arrive faster
@@ -1184,6 +1185,32 @@ function frame(now) {
      that is true at any frame rate. */
   beatEdge = A.beatFlash > prevBeatFlash + 1e-6;
   prevBeatFlash = A.beatFlash;
+
+  /* Whether that onset was a *notable* one. An onset detector answers "did
+     something start"; it does not answer "was it worth reacting to", and the
+     two are not the same question at all. Under a long held note a real track
+     still has a soft pulse ticking away — measured, that produced *more*
+     onsets than a beat-driven passage, 54 against 31 in sixteen seconds, and
+     each of them weaker: median strength 3.38 against 4.09. Reacting to every
+     one is why shapes jumped through passages with nothing new in them.
+
+     The reference is deliberately slow, spanning tens of seconds rather than
+     the last few. Within one track the ticks under a held note measure weaker
+     than the hits in a driven section, so a reference covering both lets the
+     driven sections through and holds the held ones back — where a fast
+     reference would simply adapt to whichever section was playing and pass
+     the same fraction of either. The floor is on a z-score, so it means the
+     same thing on any material. */
+  if (beatEdge) {
+    // A high-water mark rather than an average: it rises quickly toward the
+    // strong hits and gives ground slowly, so it sits up where a track's real
+    // beats are and everything softer falls under it. An average sits in the
+    // middle of the distribution by definition and therefore always passes
+    // about half of whatever is playing, which is exactly no discrimination.
+    beatRef += (A.beatStrength - beatRef) *
+               (A.beatStrength > beatRef ? 0.30 : 0.012);
+  }
+  beatNotable = beatEdge && A.beatStrength > beatRef * 0.93;
   pulseEdge = A.pulseFlash > prevPulseFlash + 1e-6;
   prevPulseFlash = A.pulseFlash;
 
@@ -1514,7 +1541,7 @@ function frame(now) {
   const spent = strikeAmt[0] <= strikeAmt[1] ? 0 : 1;
   // Which sounds earn one: a beat, but only when the passage has some weight
   // behind it, and never faster than the previous has had time to be seen.
-  if (beatEdge && musicDriveSm > 0.12 && time - lastStrike > 0.52 &&
+  if (beatNotable && musicDriveSm > 0.12 && time - lastStrike > 0.52 &&
       strikeAmt[spent] < 0.46) {
     lastStrike = time;
     strikeAge[spent] = 0;

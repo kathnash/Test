@@ -15,6 +15,11 @@ const A = {
   centroid: 0.5,          // 0..1, "brightness" of the sound
   beat: 0,                // decays 1 -> 0 after each detected onset
   beatFlash: 0,
+  // How far above the local norm the last detected onset stood. An onset
+  // detector answers "did something start"; this answers "how much of a
+  // thing", which is what separates a hit worth reacting to from the soft
+  // pulse still ticking underneath a held note.
+  beatStrength: 0,
   bpm: 0,
   ready: false, silentFor: 0,
 
@@ -672,6 +677,7 @@ const A = {
     const now = performance.now();
     if (flux > thresh && this.presence > 0.25 && now - this._lastBeat > 150) {
       this._lastBeat = now;
+      this.beatStrength = (flux - fMean) / Math.max(fSd, 1e-9);
       this._beatRaw = 1;      // sharp, for triggers
       this.beatFlash = 1;
       this._beatTimes.push(now);
@@ -700,7 +706,7 @@ const A = {
     if (this.ctx) this.ctx.close();
     Object.assign(this, {
       ctx:null, stream:null, osc:null, ready:false, presence:0, _floor:0.002,
-      beat:0, beatFlash:0, bpm:0, _beatRaw:0, _hist:[], _beatTimes:[],
+      beat:0, beatFlash:0, beatStrength:0, bpm:0, _beatRaw:0, _hist:[], _beatTimes:[],
       _prevSpec:null, _fluxHist:[],
       tempo:0, lock:0, group:4, beatPhase:0, bar:0, pulse:0, pulseFlash:0,
       gridFlash:0, beatInBar:0,

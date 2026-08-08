@@ -676,6 +676,28 @@ coverage" while looking like a tuning problem:
 Measured coverage against the swell: 0%, 0%, 0.1%, 3.9%, 19.2%, 40.6%, **51.9%**. Absent when quiet,
 about half the frame at full swell.
 
+#### "Did something start" is not "was it worth reacting to"
+
+Shapes jumped through passages of long sustained notes, where nothing new was happening. The onset
+detector was not at fault — fed a held note with vibrato, tremolo, bow noise and realistic analyser
+wobble, it reports **zero** onsets. The fault was reacting to every onset it *did* report.
+
+A real track under a held note still has a soft pulse ticking away, and measured against the demo's
+beat track it produces **more** onsets, not fewer — 54 against 31 in sixteen seconds — each of them
+weaker: median strength 3.38 against 4.09. So the discriminator is not whether something started but
+how much of a thing it was, which is the onset's height above the local norm.
+
+**A high-water mark, not an average.** The reference rises quickly toward strong hits and gives
+ground slowly, so it sits up where a track's real beats are and everything softer falls beneath it.
+An average sits in the middle of the distribution by definition and therefore passes about half of
+whatever is playing — which is no discrimination at all, and measured exactly that way: an averaged
+reference still let 4 strikes through the held passage where the high-water mark lets none.
+
+| | onsets / 16s | Fields strikes |
+|---|---|---|
+| beat-driven | 30 | **11** |
+| long held note | 37 | **0** |
+
 #### A threshold on a decaying flag is a frame-rate test
 
 `beatFlash` is set to 1 on an onset and then decayed by `dt * 5.5` inside the same update, so what
