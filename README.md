@@ -25,7 +25,14 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 `F` toggles fullscreen. The HUD hides itself after a few seconds.
 
 In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
-becomes the source material. Space cycles the look, `F` toggles fullscreen.
+becomes the source material. **Space** cycles the look, **X** swaps the two pictures over, `F`
+toggles fullscreen.
+
+The *Swap* chip appears only when a second picture is loaded, since there is nothing to swap
+otherwise. It re-runs both loaders rather than moving derived values around by hand: everything a
+picture feeds — the palette, the poster lattice, the luminance range, the shader's own copies — is
+computed on load, so swapping the halves in place would mean remembering every trace a picture
+leaves, and missing one is a bug that shows on a single look.
 
 Nine looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker

@@ -168,12 +168,13 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v69 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v70 &middot; 7 Aug 2026</p>
 </div>
 
 <div id="hud">
   <button class="chip" id="art">Image 1</button>
   <button class="chip" id="art2">Image 2</button>
+  <button class="chip" id="swap">Swap</button>
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
@@ -1680,12 +1681,33 @@ function paintTone() {
 toneEl.onclick = () => { tone = (tone + 1) % TONES.length; paintTone(); };
 
 const art2El = document.getElementById('art2');
+const swapEl = document.getElementById('swap');
 function paintLayer2Chip() {
   art2El.textContent = LAYER2.img ? 'Image 2 ✕' : 'Image 2';
+  // Nothing to swap with one picture, so the control is not there at all —
+  // the same rule the Tone chip follows.
+  swapEl.style.display = (LAYER2.img && ART.img) ? '' : 'none';
+}
+
+/* Trade the two pictures over. Everything either one feeds — the palette, the
+   poster lattice, the luminance range, the shader's own copies — is derived
+   on load, so this re-runs both loaders rather than reaching in to move the
+   derived values around. Slower by a few milliseconds and correct by
+   construction; swapping the halves by hand would mean remembering every
+   place a picture leaves a trace, and forgetting one is a bug that only
+   shows on one look. */
+function swapImages() {
+  if (!LAYER2.img || !ART.img) return;
+  const a = ART.img, aVid = ART.isVideo, aT = ART.title, aA = ART.artist;
+  const b = LAYER2.img, bVid = LAYER2.isVideo;
+  applyArtwork(b, aT, aA, bVid);
+  applyLayer2(a, aVid);
+  flash('Images swapped');
 }
 // One control, two states: it loads a second picture, and once there is one
 // the same button removes it. A separate clear button would sit in the HUD
 // doing nothing most of the time.
+swapEl.onclick = swapImages;
 art2El.onclick = () => {
   if (LAYER2.img) return clearLayer2();
   pickSlot = 2; fileInput.click();
@@ -2045,6 +2067,9 @@ addEventListener('keydown', e => {
     setLookIndex(n);
   }
   if (e.key.toLowerCase() === 'f') document.getElementById('full').click();
+  // X for swap: space already cycles the looks, and X is next to it, unshifted
+  // on every layout, and not taken by the browser.
+  if (e.key.toLowerCase() === 'x') swapImages();
 });
 
 // --- boot -------------------------------------------------------------
