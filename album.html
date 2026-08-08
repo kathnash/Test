@@ -101,6 +101,39 @@
   #np .t{ font-size:16px; font-weight:600; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #np .a{ font-size:13.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
+  /* Media library. A sheet rather than a dialog: it has to be reachable
+     one-handed on a phone while a set is running. */
+  #lib{ position:fixed; inset:0; z-index:40; display:none;
+        background:rgba(6,6,10,.72); backdrop-filter:blur(10px);
+        align-items:flex-end; justify-content:center; }
+  #lib.show{ display:flex; }
+  #lib .panel{ width:min(680px,100%); max-height:82vh; overflow:auto;
+    background:#0e0e14; border-radius:20px 20px 0 0; padding:18px 16px 22px;
+    box-shadow:0 -20px 60px rgba(0,0,0,.6); }
+  #lib .head{ display:flex; align-items:center; gap:10px; margin:0 2px 14px; }
+  #lib .ttl{ font-size:15px; letter-spacing:.02em; }
+  #lib .cnt{ color:rgba(255,255,255,.38); font-size:12px; flex:1; }
+  #lib .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr));
+    gap:10px; }
+  #lib .cell{ position:relative; aspect-ratio:1; border-radius:12px; overflow:hidden;
+    background:#191922; }
+  #lib .cell img{ width:100%; height:100%; object-fit:cover; display:block; }
+  #lib .cell.add{ display:flex; align-items:center; justify-content:center;
+    border:2px dashed rgba(255,255,255,.22); background:transparent;
+    color:rgba(255,255,255,.5); font-size:26px; cursor:pointer; }
+  #lib .slots{ position:absolute; left:6px; bottom:6px; display:flex; gap:5px; }
+  #lib .slots button{ width:26px; height:26px; border-radius:8px; border:0;
+    background:rgba(10,10,14,.72); color:rgba(255,255,255,.62); font:inherit;
+    font-size:12px; cursor:pointer; }
+  #lib .slots button.on{ background:#f2f2f4; color:#0b0b10; }
+  #lib .del{ position:absolute; right:5px; top:5px; width:24px; height:24px;
+    border-radius:8px; border:0; background:rgba(10,10,14,.72);
+    color:rgba(255,255,255,.68); font:inherit; font-size:13px; cursor:pointer; }
+  #lib .vid{ position:absolute; left:7px; top:7px; font-size:10px;
+    letter-spacing:.08em; color:rgba(255,255,255,.65); }
+  #lib .hint{ color:rgba(255,255,255,.34); font-size:11.5px; margin:16px 2px 0;
+    line-height:1.5; }
+  #lib .hint b{ color:rgba(255,255,255,.6); font-weight:600; }
   #hud{
     position:fixed; z-index:20; left:14px; right:14px; bottom:14px;
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
@@ -168,13 +201,25 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v70 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v71 &middot; 7 Aug 2026</p>
+</div>
+
+<div id="lib" aria-hidden="true">
+  <div class="panel">
+    <div class="head">
+      <span class="ttl">Media</span>
+      <span class="cnt" id="lib-count"></span>
+      <button class="chip" id="lib-close">Done</button>
+    </div>
+    <div class="grid" id="lib-grid"></div>
+    <p class="hint">Tap <b>1</b> or <b>2</b> to put a clip on screen. Anything you
+      add is scaled down on the way in, so a large file costs no more than a small one.</p>
+  </div>
 </div>
 
 <div id="hud">
-  <button class="chip" id="art">Image 1</button>
-  <button class="chip" id="art2">Image 2</button>
-  <button class="chip" id="swap">Swap</button>
+  <button class="chip" id="media">Media</button>
+  <button class="chip" id="shuffle">Shuffle</button>
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
@@ -395,7 +440,6 @@ function applyLayer2(el, isVideo = false) {
   LAYER2.img = el; LAYER2.isVideo = isVideo;
   if (updateSource2()) { FX.setSourceB(SRC2, SRC2.width, SRC2.height); readStats2(); }
   buildPoster();          // Poster samples the second picture on its own lattice
-  paintLayer2Chip();
 }
 
 function clearLayer2() {
@@ -403,7 +447,6 @@ function clearLayer2() {
   LAYER2.img = null; LAYER2.isVideo = false;
   FX.setSourceB(null);
   buildPoster();
-  paintLayer2Chip();
 }
 
 function applyArtwork(img, title = '', artist = '', isVideo = false) {
@@ -1661,17 +1704,7 @@ if (isIOS || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia)
 
 // --- artwork input: file picker, drag-drop, or a pasted URL -----------
 const fileInput = document.getElementById('file');
-// Which slot the next picked file lands in. The picker is shared, so this is
-// set immediately before opening it and read once the file comes back.
-let pickSlot = 1;
-document.getElementById('art').onclick = () => { pickSlot = 1; fileInput.click(); };
-fileInput.onchange = () => {
-  if (fileInput.files[0]) readFile(fileInput.files[0], pickSlot);
-  fileInput.value = '';        // so re-picking the same file still fires
-};
 
-// Only Cyanotype and Fields read the tone, so the control appears with them
-// rather than sitting in the HUD doing nothing on the other seven looks.
 const toneEl = document.getElementById('tone');
 const TONE_LOOKS = ['Cyanotype', 'Fields'];
 function paintTone() {
@@ -1680,63 +1713,190 @@ function paintTone() {
 }
 toneEl.onclick = () => { tone = (tone + 1) % TONES.length; paintTone(); };
 
-const art2El = document.getElementById('art2');
-const swapEl = document.getElementById('swap');
-function paintLayer2Chip() {
-  art2El.textContent = LAYER2.img ? 'Image 2 ✕' : 'Image 2';
-  // Nothing to swap with one picture, so the control is not there at all —
-  // the same rule the Tone chip follows.
-  swapEl.style.display = (LAYER2.img && ART.img) ? '' : 'none';
+/* ======================================================================
+   THE MEDIA LIBRARY
+
+   Two pictures were the wrong shape for how this gets used. A set is ten
+   clips, not two, and what you want mid-set is to reach for a different one
+   without going back through a file picker. So the library holds everything
+   and two slots say which of it is on screen; Shuffle re-draws those slots.
+
+   Every import is scaled down on the way in, which is the whole answer to
+   whether a large upload hurts. The working copy every look actually samples
+   is capped at 512px on its long edge already — a 6000px photograph is
+   thrown away before it reaches a shader either way. Keeping the library
+   copy at 1024 gives that headroom to spare and costs about 2.8MB a picture
+   decoded, where the original would have cost 96MB. Ten of those is the
+   difference between 28MB and most of a gigabyte, which is the difference
+   between working on a phone and not.
+   ====================================================================== */
+const MEDIA = [];
+const MEDIA_MAX = 24;
+const LIB_MAX = 1024;               // long edge kept in the library
+let slotA = -1, slotB = -1;
+
+const libEl = document.getElementById('lib');
+const libGrid = document.getElementById('lib-grid');
+const libCount = document.getElementById('lib-count');
+
+// Decoded down to something the rest of the page can actually afford. A
+// canvas rather than an Image: it is a drawImage source like any other, and
+// making one avoids a second decode of a data URL.
+function shrinkForLibrary(im) {
+  const w = srcW(im), h = srcH(im);
+  const k = Math.min(1, LIB_MAX / Math.max(w, h));
+  if (k >= 1 || !w || !h) return im;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+  return c;
 }
 
-/* Trade the two pictures over. Everything either one feeds — the palette, the
-   poster lattice, the luminance range, the shader's own copies — is derived
-   on load, so this re-runs both loaders rather than reaching in to move the
-   derived values around. Slower by a few milliseconds and correct by
-   construction; swapping the halves by hand would mean remembering every
-   place a picture leaves a trace, and forgetting one is a bug that only
-   shows on one look. */
-function swapImages() {
-  if (!LAYER2.img || !ART.img) return;
-  const a = ART.img, aVid = ART.isVideo, aT = ART.title, aA = ART.artist;
-  const b = LAYER2.img, bVid = LAYER2.isVideo;
-  applyArtwork(b, aT, aA, bVid);
-  applyLayer2(a, aVid);
-  flash('Images swapped');
+function makeThumb(el) {
+  const w = srcW(el), h = srcH(el);
+  if (!w || !h) return '';
+  const k = Math.min(1, 132 / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  try { c.getContext('2d').drawImage(el, 0, 0, c.width, c.height); }
+  catch (e) { return ''; }
+  return c.toDataURL('image/jpeg', 0.72);
 }
-// One control, two states: it loads a second picture, and once there is one
-// the same button removes it. A separate clear button would sit in the HUD
-// doing nothing most of the time.
-swapEl.onclick = swapImages;
-art2El.onclick = () => {
-  if (LAYER2.img) return clearLayer2();
-  pickSlot = 2; fileInput.click();
+
+function addMedia(el, isVideo, name) {
+  if (MEDIA.length >= MEDIA_MAX) { flash('The library is full.'); return -1; }
+  const item = { el, isVideo, name: name || '', thumb: makeThumb(el) };
+  MEDIA.push(item);
+  const i = MEDIA.length - 1;
+  // First one goes on screen; a second fills the other slot, since two
+  // pictures is what most of the looks are waiting for.
+  if (slotA < 0) setSlot(1, i);
+  else if (slotB < 0 && i !== slotA) setSlot(2, i);
+  else { pauseIdleVideos(); paintLibrary(); }
+  return i;
+}
+
+// Only what is on screen should be decoding. Ten paused videos are cheap;
+// ten playing ones are not, and nothing off screen is being looked at.
+function pauseIdleVideos() {
+  MEDIA.forEach((m, i) => {
+    if (!m.isVideo || !m.el.play) return;
+    const live = (i === slotA || i === slotB);
+    try { live ? m.el.play().catch(() => {}) : m.el.pause(); } catch (e) {}
+  });
+}
+
+function setSlot(which, i) {
+  if (which === 1) {
+    if (slotB === i) slotB = -1;          // a clip cannot be in both at once
+    slotA = i;
+  } else {
+    if (slotA === i) slotA = -1;
+    slotB = i;
+  }
+  applySlots();
+}
+
+function applySlots() {
+  pauseIdleVideos();
+  const a = MEDIA[slotA], b = MEDIA[slotB];
+  if (a) applyArtwork(a.el, a.name, '', a.isVideo);
+  if (b) applyLayer2(b.el, b.isVideo); else clearLayer2();
+  paintLibrary();
+}
+
+function removeMedia(i) {
+  const m = MEDIA[i];
+  if (!m) return;
+  if (m.isVideo && m.el) { try { m.el.pause(); } catch (e) {} }
+  MEDIA.splice(i, 1);
+  // Indices above the hole shift down; the slots have to follow.
+  const fix = s => s === i ? -1 : (s > i ? s - 1 : s);
+  slotA = fix(slotA); slotB = fix(slotB);
+  if (slotA < 0 && MEDIA.length) slotA = 0;
+  applySlots();
+}
+
+function shuffleMedia() {
+  if (MEDIA.length < 2) { flash('Add more media to shuffle.'); return; }
+  const pick = () => Math.floor(Math.random() * MEDIA.length);
+  let a = pick(), b = pick();
+  // Try for a different pair than the one showing, and a different clip in
+  // each slot. A handful of attempts rather than a loop with no bound.
+  for (let n = 0; n < 24 && (a === b || (a === slotA && b === slotB)); n++) {
+    a = pick(); b = pick();
+  }
+  slotA = a; slotB = MEDIA.length > 1 ? b : -1;
+  applySlots();
+}
+
+function paintLibrary() {
+  libCount.textContent = MEDIA.length
+    ? MEDIA.length + (MEDIA.length === 1 ? ' clip' : ' clips') : '';
+  libGrid.innerHTML = '';
+  MEDIA.forEach((m, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const img = document.createElement('img');
+    img.src = m.thumb; img.alt = m.name || 'media';
+    cell.appendChild(img);
+    if (m.isVideo) {
+      const v = document.createElement('span');
+      v.className = 'vid'; v.textContent = 'VIDEO';
+      cell.appendChild(v);
+    }
+    const slots = document.createElement('div');
+    slots.className = 'slots';
+    [1, 2].forEach(n => {
+      const btn = document.createElement('button');
+      btn.textContent = n;
+      btn.className = (n === 1 ? slotA : slotB) === i ? 'on' : '';
+      btn.title = 'Show as image ' + n;
+      btn.onclick = () => setSlot(n, i);
+      slots.appendChild(btn);
+    });
+    cell.appendChild(slots);
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '\u2715'; del.title = 'Remove';
+    del.onclick = () => removeMedia(i);
+    cell.appendChild(del);
+    libGrid.appendChild(cell);
+  });
+  const add = document.createElement('div');
+  add.className = 'cell add'; add.textContent = '+'; add.title = 'Add media';
+  add.onclick = () => fileInput.click();
+  libGrid.appendChild(add);
+}
+
+document.getElementById('media').onclick = () => {
+  paintLibrary();
+  libEl.classList.add('show');
+  libEl.setAttribute('aria-hidden', 'false');
 };
-paintLayer2Chip();
+document.getElementById('lib-close').onclick = () => {
+  libEl.classList.remove('show');
+  libEl.setAttribute('aria-hidden', 'true');
+};
+libEl.onclick = e => { if (e.target === libEl) document.getElementById('lib-close').click(); };
+document.getElementById('shuffle').onclick = shuffleMedia;
 
-function readFile(file, slot = 1) {
-  const name = file.name.replace(/\.[^.]+$/, '');
+fileInput.onchange = () => {
+  // Several at once, because loading a set one file at a time is the thing
+  // this was built to stop.
+  [...fileInput.files].forEach(f => readFile(f));
+  fileInput.value = '';        // so re-picking the same file still fires
+};
+
+/* Everything lands in the library now rather than in a slot. The slot is
+   decided by addMedia — first in goes on screen, second fills the other
+   half — so drop, paste, the picker and the panel's + tile all share one
+   path and none of them needs to know which half it is filling. */
+function readFile(file) {
+  const name = file.name ? file.name.replace(/\.[^.]+$/, '') : '';
 
   if (file.type.startsWith('video/')) {
-    if (slot === 2) {
-      const v2 = document.createElement('video');
-      v2.src = URL.createObjectURL(file);
-      v2.muted = true; v2.loop = true; v2.playsInline = true; v2.autoplay = true;
-      v2.onloadeddata = () => {
-        v2.play().catch(() => {});
-        applyLayer2(v2, true);
-        LAYER2.rvfc = typeof v2.requestVideoFrameCallback === 'function';
-        if (LAYER2.rvfc) {
-          const tick2 = () => {
-            LAYER2.dirty = true;
-            if (LAYER2.img === v2) v2.requestVideoFrameCallback(tick2);
-          };
-          v2.requestVideoFrameCallback(tick2);
-        }
-      };
-      v2.onerror = () => flash('Could not play that video. Try an MP4.');
-      return;
-    }
     // Object URLs are same-origin, so frames stay readable for palette
     // extraction. muted + playsInline are what let it autoplay on iOS.
     const v = document.createElement('video');
@@ -1744,16 +1904,20 @@ function readFile(file, slot = 1) {
     v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
     v.onloadeddata = () => {
       v.play().catch(() => {});
-      try { applyArtwork(v, name, '', true); }
-      catch (e) { flash('Could not read that video.'); }
-
-      videoRVFC = typeof v.requestVideoFrameCallback === 'function';
-      if (videoRVFC) {
+      const i = addMedia(v, true, name);
+      if (i < 0) return;
+      // Frame callbacks are per element and only worth running while the
+      // clip is actually on screen.
+      if (typeof v.requestVideoFrameCallback === 'function') {
         const tick = () => {
-          videoDirty = true;
-          if (ART.img === v) v.requestVideoFrameCallback(tick);
+          if (ART.img === v) videoDirty = true;
+          if (LAYER2.img === v) LAYER2.dirty = true;
+          if (ART.img === v || LAYER2.img === v) v.requestVideoFrameCallback(tick);
+          else setTimeout(() => v.requestVideoFrameCallback(tick), 400);
         };
         v.requestVideoFrameCallback(tick);
+        videoRVFC = true;
+        LAYER2.rvfc = true;
       }
     };
     v.onerror = () => flash('Could not play that video. Try an MP4.');
@@ -1765,9 +1929,7 @@ function readFile(file, slot = 1) {
   // so the canvas stays readable for palette extraction, even from file://.
   fr.onload = async () => {
     try {
-      const im = await loadImage(fr.result);
-      if (slot === 2) applyLayer2(im, false);
-      else applyArtwork(im, name, '');
+      addMedia(shrinkForLibrary(await loadImage(fr.result)), false, name);
     } catch (e) { flash('Could not read that image.'); }
   };
   fr.readAsDataURL(file);
@@ -1780,8 +1942,9 @@ addEventListener('dragleave', e => { e.preventDefault(); if (--dragDepth <= 0) {
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => {
   e.preventDefault(); dragDepth = 0; dropEl.classList.remove('on');
-  const f = e.dataTransfer.files[0];
-  if (f && (f.type.startsWith('image/') || f.type.startsWith('video/'))) return readFile(f);
+  const fs = [...(e.dataTransfer.files || [])]
+    .filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+  if (fs.length) return fs.forEach(f => readFile(f));
   const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
   if (url) tryUrl(url.trim());
 });
@@ -1794,7 +1957,7 @@ addEventListener('paste', e => {
 
 async function tryUrl(url) {
   try {
-    applyArtwork(await loadImage(url, true), '', '');
+    addMedia(shrinkForLibrary(await loadImage(url, true)), false, '');
   } catch (e) {
     flash(e.message === 'TAINTED'
       ? 'That image host doesn’t allow cross-origin reads, so its colours can’t be sampled. Save it and drop the file instead.'
@@ -2067,9 +2230,11 @@ addEventListener('keydown', e => {
     setLookIndex(n);
   }
   if (e.key.toLowerCase() === 'f') document.getElementById('full').click();
-  // X for swap: space already cycles the looks, and X is next to it, unshifted
-  // on every layout, and not taken by the browser.
-  if (e.key.toLowerCase() === 'x') swapImages();
+  // X shuffles the library. Space already cycles the looks, and X is next to
+  // it, unshifted on every layout, and not claimed by the browser.
+  if (e.key.toLowerCase() === 'x') shuffleMedia();
+  if (e.key.toLowerCase() === 'm') document.getElementById('media').click();
+  if (e.key === 'Escape') document.getElementById('lib-close').click();
 });
 
 // --- boot -------------------------------------------------------------
@@ -2081,7 +2246,10 @@ addEventListener('keydown', e => {
   }
   resize();
   setLookIndex(look);
-  try { applyArtwork(await sampleArtwork()); } catch (e) { /* visuals still run */ }
+  // The picture the page opens on is the library's first entry, so the panel
+  // is never empty and Shuffle has something to work with from the start.
+  try { addMedia(await sampleArtwork(), false, 'Sample'); }
+  catch (e) { /* visuals still run */ }
   requestAnimationFrame(frame);
 })();
 </script>

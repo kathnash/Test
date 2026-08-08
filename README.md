@@ -24,15 +24,28 @@ Open either page in a browser and pick a source:
 In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cycles palette,
 `F` toggles fullscreen. The HUD hides itself after a few seconds.
 
-In `album.html`: drop any image on the page (or paste one, or use the Artwork… button) and it
-becomes the source material. **Space** cycles the look, **X** swaps the two pictures over, `F`
-toggles fullscreen.
+In `album.html`: drop images or clips on the page, paste them, or open **Media** and add them there
+— several at once is fine. **Space** cycles the look, **X** shuffles the media, **M** opens the
+library, `F` toggles fullscreen.
 
-The *Swap* chip appears only when a second picture is loaded, since there is nothing to swap
-otherwise. It re-runs both loaders rather than moving derived values around by hand: everything a
-picture feeds — the palette, the poster lattice, the luminance range, the shader's own copies — is
-computed on load, so swapping the halves in place would mean remembering every trace a picture
-leaves, and missing one is a bug that shows on a single look.
+### A library, not two slots
+
+Two pictures was the wrong shape for how this gets used. A DJ set is ten clips, not two, and what
+you want mid-set is to reach for a different one without going back through a file picker. So the
+library holds everything and two slots say which of it is on screen: the *Media* panel lists what is
+loaded with a **1** and a **2** on each tile, and *Shuffle* re-draws both slots at random — never the
+same clip twice, and trying for a different pair than the one already showing.
+
+**Everything is scaled down on the way in**, which is the whole answer to whether a large upload
+hurts. The working copy every look samples is capped at 512px on its long edge *already*, so a
+6000px photograph is thrown away before it reaches a shader either way. Keeping the library copy at
+1024 leaves that headroom to spare and costs about 2.8MB a picture decoded, where the original would
+have cost 96MB — ten of those is the difference between 28MB and most of a gigabyte, which is the
+difference between working on a phone and not.
+
+**Only what is on screen decodes.** Videos not in either slot are paused, and their frame callbacks
+throttled: ten paused clips are cheap, ten playing ones are not, and nothing off screen is being
+looked at.
 
 Nine looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
