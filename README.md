@@ -651,6 +651,13 @@ rings are drawn *over* the rectangles, at which point the occlusion problem stop
 back `23,50,124` on a ground of `22,47,119` — invisible. A hairline at 24% white keeps the
 composition on screen whatever the picture does, and disappears into it when it does not.
 
+**The chip proportions come off the reference collage**, not from arithmetic: each is 8.9% of the
+frame's height and 1.55 times as wide as it is tall, the gaps are three quarters of a chip, and the
+column comes to about 71% of the height. The first pass had them at 3:1, twice as wide as the
+reference, which turned a column of paint chips into a stack of bars. Height sets the size and width
+only caps it — the way round that survives both orientations — and the consequence is that on a wide
+frame the chips are a modest 9% of it, because the column's height is already spoken for.
+
 Sampling reads a **96px cover-fit miniature** in the canvas's own aspect, so a screen position maps
 straight to a pixel with no further transform. Whole-sheet, once per source change, rather than five
 1x1 readbacks a frame: at that size the pixels are free and the call overhead is not. Small on

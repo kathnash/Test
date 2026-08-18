@@ -201,7 +201,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v73 &middot; 18 Aug 2026</p>
+  <p class="ver" id="ver">v74 &middot; 18 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -1242,15 +1242,23 @@ function bandDrive(s, v, dt) {
   return Math.pow(pos, 2.20 - (gain() - 1) * 0.28) * A.presence;
 }
 
-/* Sizes are set from the height and then capped against the width, rather
-   than the other way round. Driving off the width makes the swatches swallow
-   a phone and vanish on a desktop; driving off the height alone makes them
-   thin ribbons on a wide frame. Height sets the stack, the aspect sets the
-   width, and the cap only ever bites in portrait. */
+/* Proportions taken off the reference collage rather than invented: each
+   chip is 8.9% of the frame's height and about 1.55 times as wide as it is
+   tall, the gaps are three quarters of a chip, and the column comes to
+   roughly 71% of the height. The first pass had them at 3:1 — twice as wide
+   as the reference — which turned a column of paint chips into a stack of
+   bars.
+
+   The height sets everything and the width only ever caps it, which is the
+   way round that survives both orientations: a width-led size swallows a
+   phone and disappears on a desktop. The consequence is that on a wide frame
+   the chips are a modest 9% of the width, because the column's height is
+   already spoken for — that is what these proportions give, not an accident
+   of the arithmetic. */
 function samplerLayout() {
-  const sh = H * 0.094;                       // one rectangle
-  const gap = sh * 0.5;
-  const sw = Math.min(sh * 3.1, W * 0.44);
+  const sh = H * 0.089;                       // one chip
+  const gap = sh * 0.75;
+  const sw = Math.min(sh * 1.55, W * 0.42);   // the cap only bites in portrait
   return { sh, gap, sw, left: (W - sw) / 2,
            top: (H - (sh * 5 + gap * 4)) / 2 };
 }
