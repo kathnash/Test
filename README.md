@@ -718,6 +718,37 @@ reference still let 4 strikes through the held passage where the high-water mark
 | beat-driven | 30 | **11** |
 | long held note | 37 | **0** |
 
+#### Poster's analog surface
+
+Thick paint on linen, without touching which cells appear or how they move. Two sheets, built once
+per resize at frame size rather than tiled so there are no seams to line up, and both drawn
+*transparent* — carrying only their marks, not a tint.
+
+**The texture has to belong to the tiles.** The first attempt put weave and paint into one sheet and
+laid it over the finished frame, which gave long strokes crossing the flat ground between the blocks
+— scratches on the picture rather than paint on the blocks. The blocks are drawn into their own
+layer now and the paint applied with `source-atop`, so it lands on them and nowhere else. Because
+the sheet is strokes over transparency rather than a tinted overlay, the palette survives intact.
+
+**A ridge is two strokes, not one.** Every mark is drawn twice, white just to one side and black
+just to the other: a raised edge catches light on one flank and shades on the other, where a single
+stroke only ever smears. Strokes are kept short — impasto is a loaded brush put down and lifted, and
+anything long enough to cross a block reads as a drag mark. Direction changes on a patch scale near
+a cell but deliberately not locked to the grid: paint that lines up with the blocks looks like a
+filter, paint that ignores them looks like paint.
+
+**A weave is regular in the large and irregular in every particular.** Even spacing at even opacity
+is graph paper. The threads wander by a pixel, vary in opacity, and roughly one in seven is skipped.
+
+**And the texture is screen-fixed.** Real paint belongs to the surface, not to the shapes: letting
+it travel with the cells reads as the paint sliding about. Edge jitter is drawn from a fixed table
+by cell index for the same reason — a jitter rolled per frame makes every edge crawl. It is applied
+to the edges rather than the position, so a block sits exactly where the animation puts it and only
+its cut is irregular.
+
+Measured, on-screen motion is unchanged: mean 3.88 before against 3.77 after, which is noise. Frame
+cost 16.7ms to 26.6ms — still four times cheaper than any other look.
+
 #### A threshold on a decaying flag is a frame-rate test
 
 `beatFlash` is set to 1 on an onset and then decayed by `dt * 5.5` inside the same update, so what
