@@ -47,12 +47,13 @@ difference between working on a phone and not.
 throttled: ten paused clips are cheap, ten playing ones are not, and nothing off screen is being
 looked at.
 
-Nine looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
+Ten looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
 without deleting any code. Removing that one word brings a look back.
 
-Poster, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields, Ripple,
-Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader (`fx.js`).
+Poster, Sampler, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields,
+Ripple, Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader
+(`fx.js`).
 
 **Tone** — Cyanotype's chemistry and Fields' ground both take a tone from the *Tone* chip: Blue
 (the original cyanotype), Green, Yellow or Red. One choice sets the whole ramp rather than exposing
@@ -67,6 +68,7 @@ it: with one picture loaded they all work exactly as before.
 | look | with a second picture |
 |---|---|
 | Poster | a wandering *cluster* of layer-two cells that bursts open on a transient |
+| Sampler | nothing — the swatches read the picture that is on screen, so the second one arrives by shuffling |
 | Blur | an upright oval of layer two floating centre-frame, defocused by the same kernel |
 | Punch | layer two shows through the cut holes |
 | Dots | every dot takes its colour from layer two; the invented hues are the no-second-picture default |
@@ -129,6 +131,11 @@ it: with one picture loaded they all work exactly as before.
   pushes; without it the circles pulsed while the picture inside sat still, and the look read as
   decoration rather than as reactive. A riso duotone was tried here and removed: it read as a filter laid over the
   image rather than as the image itself.
+- **Sampler** — the picture full-frame and completely still, with five colour swatches down the
+  centre. Each swatch owns a circle drifting over the picture and wears whatever colour is under it,
+  so the only thing that ever moves is where the colour is being taken from. Sound speeds the
+  drifting and nothing else — and each circle answers a different band, so a bass line moves the
+  bottom swatch while the top one keeps to its own pace.
 - **Cyanotype** — a contact print, running the actual darkroom process, with the music as the light
   source. Sound exposes the sheet: a dusty violet coating, the image burning in, the water wash where
   the Prussian blue arrives all at once, then the deepening as the pigment oxidises. Quiet reverses
@@ -610,6 +617,47 @@ when the room goes quiet.
 
 Net for Fields: motion **3.86 → 0.79**, quiet-to-loud range **4.37x**, frame cost down from 140ms to
 122ms.
+
+### Sampler: the only thing that moves is where the colour is taken from
+
+The picture fills the frame and does not move. Five rectangles sit down the centre and do not move
+either. Each one owns a circle drifting over the picture, and wears whatever colour that circle is
+over — so the composition is completely still and **the colour is the whole of the response**.
+
+That is the point rather than a limitation. Sound changes the **speed of the sampling** and nothing
+else: no scale, no opacity, no jump. A swatch crawling through a sky is one slow gradient; the same
+swatch at seven times the rate picks out the whole picture. Silent to loud is **8 px/s to 48 px/s**
+of circle travel, which shows up as roughly **2 to 250** levels of colour change per second.
+
+**Each circle answers a different band, not the level.** Five circles following the level would
+speed up and slow down together, which is one reaction drawn five times. Split by band — air, high,
+the overall level, mid, bass, top to bottom — a bass line moves the bottom swatch while the top one
+keeps drifting at its own pace. Each band gets its **own** slow floor and ceiling, expanded exactly
+the way `musicDrive` expands the level, because the bands are already measured against their own
+recent behaviour upstream: a shared floor would say nothing about whether the top end is loud *for
+the top end*.
+
+**The paths are integrated phases, never `time * rate`.** Written the other way, every loud passage
+would begin by teleporting the swatches to a colour from somewhere else in the picture, because the
+position would depend on the rate current now rather than on every rate it has had.
+
+**Penning the circles into the margins cost the look its subject.** The first pass kept them either
+side of the column so nothing could ever pass behind a rectangle. On a picture with a big even sky
+the margins are the part with nothing in them, and three of five swatches came back the same blue.
+Five swatches that agree are one swatch drawn five times. They roam the whole frame now and the
+rings are drawn *over* the rectangles, at which point the occlusion problem stops existing.
+
+**A swatch that vanishes is the mechanism working.** Measured against a blue sky the rectangle came
+back `23,50,124` on a ground of `22,47,119` — invisible. A hairline at 24% white keeps the
+composition on screen whatever the picture does, and disappears into it when it does not.
+
+Sampling reads a **96px cover-fit miniature** in the canvas's own aspect, so a screen position maps
+straight to a pixel with no further transform. Whole-sheet, once per source change, rather than five
+1x1 readbacks a frame: at that size the pixels are free and the call overhead is not. Small on
+purpose as well — a circle a few percent of the frame across should report the colour of the *area*
+it covers, not of the one pixel at its centre, and downscaling is the cheapest box filter there is.
+Verified against an image of hard colour quadrants: every swatch reports the quadrant under its
+circle to within one level.
 
 ### Lens: state the rate as the thing you can see
 

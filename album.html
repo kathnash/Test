@@ -201,7 +201,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v72 &middot; 7 Aug 2026</p>
+  <p class="ver" id="ver">v73 &middot; 18 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -390,6 +390,12 @@ const SRC = document.createElement('canvas');
 const sg  = SRC.getContext('2d', { willReadFrequently: true });
 const SRC_MAX = 512;
 
+/* Bumped whenever SRC is redrawn, which for a video is once per decoded
+   frame rather than once per display frame — phone video is usually 30fps
+   against a 60Hz display, so half of the display frames carry the same
+   picture and re-reading one is pure cost. */
+let srcSerial = 0;
+
 function updateSource() {
   const w = srcW(ART.img), h = srcH(ART.img);
   if (!ART.img || !w || !h) return false;
@@ -397,6 +403,7 @@ function updateSource() {
   const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
   if (SRC.width !== cw || SRC.height !== ch) { SRC.width = cw; SRC.height = ch; }
   sg.drawImage(ART.img, 0, 0, cw, ch);
+  srcSerial++;    // anything caching a read of SRC can tell it has moved on
   return true;
 }
 
@@ -670,6 +677,9 @@ const LOOKS = [
   // it can be brought back by deleting one word.
   { name:'Drift',  move:0.85, kick:0.70, rad:0.85, alpha:0.55, comp:'source-over', hidden:true },
   { name:'Poster', move:0.50, kick:1.00, rad:1.00, alpha:0.60, comp:'source-over' },
+  // The artwork itself, with five swatches sampling it. No blobs, no
+  // feedback — the move/kick/rad numbers are unused here.
+  { name:'Sampler', move:0.50, kick:1.00, rad:1.00, alpha:0.60, comp:'source-over' },
   { name:'Swirl',  move:1.00, kick:0.95, rad:1.00, alpha:0.60, comp:'source-over', hidden:true },
   { name:'Glitch', move:1.40, kick:1.50, rad:1.15, alpha:0.72, comp:'lighter', hidden:true },
   // Shader looks: the artwork is bent rather than painted over.
@@ -1150,8 +1160,223 @@ function drawFX(cfg) {
   });
 }
 
+/* =====================================================================
+   SAMPLER  —  five swatches, each fed by a circle wandering the picture
+   ===================================================================== */
+
+/* The picture is the background and it does not move. Five rectangles sit
+   down the centre and they do not move either. The only thing that moves is
+   where each rectangle's colour is being taken from: every swatch owns one
+   circle drifting over the frame, and wears whatever that circle is over.
+
+   So sound changes the *speed* of the sampling and nothing else. No scale,
+   no opacity, no jump — the composition holds still and the colour is the
+   whole of the response. That is what keeps it watchable rather than busy:
+   a swatch crawling through a sky is one slow gradient, and the same swatch
+   at seven times the rate is picking out the whole picture.
+
+   Each circle answers a different band rather than all five following the
+   level together. Following the level, five circles would speed up and slow
+   down in unison, which is one reaction drawn five times. Split by band, a
+   bass line moves the bottom swatch while the top one keeps drifting at its
+   own pace, and a cymbal moves the top while the bottom holds — five
+   readings of the same moment. Top to bottom: air, high, the whole level,
+   mid, bass, with the level in the middle as the one that always answers. */
+const SAMPLERS = [
+  { band: 'air' }, { band: 'high' }, { band: 'level' },
+  { band: 'mid' }, { band: 'bass' }
+].map((s, i) => Object.assign(s, {
+  // Fixed phase offsets, so the five paths are unrelated to each other and
+  // stay unrelated. Rolled per session they would differ every reload, and
+  // the arrangement is part of the composition.
+  seed: [0.7 + i * 1.31, 2.3 + i * 0.87, 4.1 + i * 1.09],
+  ph: i * 1.23,          // integrated, never time * rate — see below
+  r: 128, g: 128, b: 128,  // the swatch colour, smoothed
+  drv: 0,                  // smoothed drive for this band
+  lo: 0.25, hi: 0.35,      // its own slow floor and ceiling
+  cx: 0, cy: 0
+}));
+
+/* A cover-fit miniature of the artwork in the canvas's own aspect, so a
+   point on screen maps straight to a pixel here with no further transform —
+   the background is drawn with the same fit.
+
+   Read back whole, once, rather than five 1x1 readbacks a frame: at this
+   size the pixels are free and the call overhead is not. Small on purpose
+   as well. A circle a few percent of the frame across should report the
+   colour of the area it covers rather than of the one pixel at its centre,
+   and downscaling is the cheapest box filter there is. */
+const SAMP = { c: null, x: null, w: 0, h: 0, data: null, token: null, serial: -1 };
+function ensureSampleSheet() {
+  if (!SRC.width || !SRC.height) return false;
+  const w = 96, h = Math.max(2, Math.round(w * H / Math.max(1, W)));
+  if (!SAMP.c) {
+    SAMP.c = document.createElement('canvas');
+    SAMP.x = SAMP.c.getContext('2d', { willReadFrequently: true });
+  }
+  // Rebuilt when the frame shape changes, when the picture changes, or when
+  // a video has actually decoded a new frame — not once per display frame.
+  if (SAMP.data && SAMP.w === w && SAMP.h === h &&
+      SAMP.token === ART.img && SAMP.serial === srcSerial) return true;
+  if (SAMP.c.width !== w || SAMP.c.height !== h) { SAMP.c.width = w; SAMP.c.height = h; }
+  const s = Math.max(w / SRC.width, h / SRC.height);
+  const dw = SRC.width * s, dh = SRC.height * s;
+  try {
+    SAMP.x.drawImage(SRC, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    SAMP.data = SAMP.x.getImageData(0, 0, w, h).data;
+    SAMP.w = w; SAMP.h = h; SAMP.token = ART.img; SAMP.serial = srcSerial;
+    return true;
+  } catch (e) { SAMP.data = null; return false; }   // tainted source
+}
+
+/* Where each band sits between its own slow floor and ceiling, expanded and
+   curved the same way musicDrive expands the level — see the note there.
+   Per band rather than shared, because the bands are measured against their
+   own recent behaviour upstream and so a shared floor would say nothing:
+   what matters is whether the top end is loud *for the top end*. */
+function bandDrive(s, v, dt) {
+  s.lo += ((v < s.lo ? v : s.lo) - s.lo) * (1 - Math.exp(-dt / (v < s.lo ? 0.45 : 14)));
+  s.hi += ((v > s.hi ? v : s.hi) - s.hi) * (1 - Math.exp(-dt / (v > s.hi ? 0.45 : 20)));
+  const span = Math.max(0.07, s.hi - s.lo);
+  const pos = Math.min(1, Math.max(0, (v - s.lo) / span));
+  return Math.pow(pos, 2.20 - (gain() - 1) * 0.28) * A.presence;
+}
+
+/* Sizes are set from the height and then capped against the width, rather
+   than the other way round. Driving off the width makes the swatches swallow
+   a phone and vanish on a desktop; driving off the height alone makes them
+   thin ribbons on a wide frame. Height sets the stack, the aspect sets the
+   width, and the cap only ever bites in portrait. */
+function samplerLayout() {
+  const sh = H * 0.094;                       // one rectangle
+  const gap = sh * 0.5;
+  const sw = Math.min(sh * 3.1, W * 0.44);
+  return { sh, gap, sw, left: (W - sw) / 2,
+           top: (H - (sh * 5 + gap * 4)) / 2 };
+}
+
+function drawSampler(dt) {
+  const L = samplerLayout();
+  const have = ensureSampleSheet();
+
+  // The picture, cover-fit, untouched. It is the subject; the circles are
+  // the only motion in the look.
+  const im = ART.img;
+  const iw = srcW(im), ih = srcH(im);
+  let drew = false;
+  if (im && iw && ih && (!ART.isVideo || im.readyState >= 2)) {
+    const s = Math.max(W / iw, H / ih);
+    const dw = iw * s, dh = ih * s;
+    try { g.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh); drew = true; }
+    catch (e) { /* frame not decodable yet */ }
+  }
+  if (!drew) { g.fillStyle = ART.dark; g.fillRect(0, 0, W, H); }
+
+  const rad = L.sh * 0.30;
+  /* The circles roam the whole frame, including the ground under the column.
+
+     The first pass penned them into the margins either side of the swatches
+     so that nothing could ever pass behind a rectangle. That cost the look
+     its subject: on a picture with a big even sky the margins are the part
+     with nothing in them, and three of the five swatches came back the same
+     blue because all three circles were stuck out at the edges. Five
+     swatches that agree are one swatch drawn five times. So they go
+     anywhere, the rings are drawn over the rectangles rather than under
+     them, and the occlusion problem stops existing. */
+  const mx = W * 0.19, ay = H * 0.155;
+  // Scattered rather than stacked, so the five are spread over the picture
+  // instead of queueing down one side.
+  const HOME = [[0.22, 0.20], [0.76, 0.33], [0.34, 0.56], [0.70, 0.74], [0.48, 0.87]];
+
+  for (let i = 0; i < 5; i++) {
+    const s = SAMPLERS[i];
+    const raw = A[s.band] || 0;
+    const d = bandDrive(s, raw, dt);
+    s.drv += (d - s.drv) * (1 - Math.exp(-dt / 0.35));
+
+    /* Integrated, so speed is a pure time-warp. Written as time * rate, a
+       change of rate teleports the circle — the position would depend on
+       the rate that is current now rather than on every rate it has had,
+       and every loud passage would start by throwing the swatches to a
+       colour from somewhere else in the picture. */
+    s.ph += dt * (0.16 + s.drv * 1.05);
+
+    // Two unrelated frequencies per axis: one sine is a pendulum, two make a
+    // path that does not visibly repeat.
+    const ux = 0.70 * Math.sin(s.ph) + 0.30 * Math.sin(s.ph * 1.63 + s.seed[0]);
+    const uy = 0.70 * Math.sin(s.ph * 0.78 + s.seed[1])
+             + 0.30 * Math.sin(s.ph * 1.31 + s.seed[2]);
+
+    const hx = Math.min(W - rad - mx, Math.max(rad + mx, W * HOME[i][0]));
+    const hy = Math.min(H - rad - ay, Math.max(rad + ay, H * HOME[i][1]));
+    s.cx = hx + ux * mx;
+    s.cy = hy + uy * ay;
+
+    if (have && SAMP.data) {
+      const px = Math.min(SAMP.w - 1, Math.max(0, Math.round(s.cx / W * SAMP.w)));
+      const py = Math.min(SAMP.h - 1, Math.max(0, Math.round(s.cy / H * SAMP.h)));
+      const o = (py * SAMP.w + px) * 4;
+      // Smoothed, or video noise makes the swatch shimmer. The constant
+      // shortens as the circle speeds up, so a fast pass still reports what
+      // it went over instead of averaging the lot into mud.
+      const k = 1 - Math.exp(-dt / (0.30 / (1 + s.drv * 2.5)));
+      s.r += (SAMP.data[o]     - s.r) * k;
+      s.g += (SAMP.data[o + 1] - s.g) * k;
+      s.b += (SAMP.data[o + 2] - s.b) * k;
+    }
+  }
+
+  // Leader lines first, so they run underneath everything. Each goes to the
+  // side of its rectangle the circle happens to be on, so the line never
+  // crosses the column to reach it.
+  g.lineWidth = 1;
+  g.strokeStyle = 'rgba(255,255,255,0.15)';
+  for (let i = 0; i < 5; i++) {
+    const s = SAMPLERS[i];
+    const y = L.top + i * (L.sh + L.gap) + L.sh / 2;
+    const x = s.cx < W / 2 ? L.left : L.left + L.sw;
+    g.beginPath(); g.moveTo(s.cx, s.cy); g.lineTo(x, y); g.stroke();
+  }
+
+  /* The swatches. Flat colour, hard edges, and a shadow that is only ever a
+     lift off the picture. The first pass had it at a third opacity with a
+     tight blur and an offset, which on a busy photograph reads as a second
+     rectangle sitting behind the first rather than as a shadow. Wide, weak
+     and centred is what says "this is on top" without drawing anything. */
+  g.save();
+  g.shadowColor = 'rgba(0,0,0,0.22)';
+  g.shadowBlur = L.sh * 0.55;
+  for (let i = 0; i < 5; i++) {
+    const s = SAMPLERS[i];
+    g.fillStyle = `rgb(${s.r | 0},${s.g | 0},${s.b | 0})`;
+    g.fillRect(L.left, L.top + i * (L.sh + L.gap), L.sw, L.sh);
+  }
+  g.restore();
+  /* A hairline, because a swatch will sometimes match what is behind it
+     exactly — that is the whole mechanism working. Measured on a blue sky
+     the rectangle came back 23,50,124 against a ground of 22,47,119, which
+     is a swatch that has vanished. The line keeps the composition on screen
+     whatever the picture does, and disappears into it when it does not. */
+  g.lineWidth = 1;
+  g.strokeStyle = 'rgba(255,255,255,0.24)';
+  for (let i = 0; i < 5; i++)
+    g.strokeRect(L.left + 0.5, L.top + i * (L.sh + L.gap) + 0.5, L.sw - 1, L.sh - 1);
+
+  // The rings last, so a circle crossing the column stays visible. A dark
+  // ring just outside a light one, so they read on a white sky and on a
+  // black rock without tinting either.
+  for (let i = 0; i < 5; i++) {
+    const s = SAMPLERS[i];
+    g.beginPath(); g.arc(s.cx, s.cy, rad + 1.4, 0, 6.2832);
+    g.lineWidth = 2.6; g.strokeStyle = 'rgba(0,0,0,0.28)'; g.stroke();
+    g.beginPath(); g.arc(s.cx, s.cy, rad, 0, 6.2832);
+    g.lineWidth = 1.8; g.strokeStyle = 'rgba(255,255,255,0.88)'; g.stroke();
+  }
+}
+
 function drawScene(dt) {
   if (is('Poster')) return drawPoster(dt);
+  if (is('Sampler')) return drawSampler(dt);
   const w = LO.width, h = LO.height;
   const cfg = LOOKS[look], G = gain();
   const energy = resp(A.level);
@@ -1732,7 +1957,7 @@ function frame(now) {
 
   // Grain hides banding in the soft looks, but only muddies Poster's flat
   // blocks, which are meant to read as clean colour.
-  if (!is('Poster') && GRAIN_SHEET) {
+  if (!is('Poster') && !is('Sampler') && GRAIN_SHEET) {
     g.globalCompositeOperation = 'overlay';
     g.globalAlpha = 0.035;
     g.drawImage(GRAIN_SHEET, 0, 0, W, H);
