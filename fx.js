@@ -252,9 +252,35 @@ const FX = {
                                    : vec2(ca / uTexAspect, 1.0);
         return (uv - 0.5) * s + 0.5;
       }
+      /* What to do when a look asks for a point outside the picture.
+
+         It used to clamp, and clamping is what produced the bars along the
+         sides of Fields and across the top row of Lens: every sample past the
+         edge comes back as the same outermost row of pixels, so one pixel is
+         stretched into a slab. Against a test picture with a magenta border,
+         Fields turned 5.7% of the frame into smear and Lens 18%.
+
+         Mirroring folds the coordinate back into the picture instead, so what
+         continues past the edge is more picture. That is the right default
+         here because most of these looks travel beyond the frame *on purpose*
+         — Lens drifts the whole image behind its grid, Ribbed parallaxes it
+         behind the glass, Blur reaches a radius past every edge — and cutting
+         that travel back to fit would cost the look the movement it was built
+         around. A reflected sliver reads as picture; a stretched row of pixels
+         reads as a broken screen.
+
+         Where the overflow is an accident rather than a design, it is fixed at
+         the source instead and never reaches here — see Fields' view scale.
+
+         The clamp stays underneath as a guard: mirroring maps everything into
+         range, so it only ever catches a NaN. */
+      vec2 edgeUV(vec2 p){
+        vec2 q = mod(p, 2.0);          // GLSL mod is non-negative for +y
+        return 1.0 - abs(1.0 - q);     // triangle wave: 0..1, folded at both ends
+      }
       vec3 tex(vec2 uv){
         if (uHasTex < 0.5) return vec3(0.10, 0.10, 0.13);
-        return texture2D(uTex, clamp(uv, 0.001, 0.999)).rgb;
+        return texture2D(uTex, clamp(edgeUV(uv), 0.001, 0.999)).rgb;
       }
 
       // Same pair for the second picture. It gets its own cover-fit because
@@ -267,7 +293,7 @@ const FX = {
         return (uv - 0.5) * s + 0.5;
       }
       vec3 texB(vec2 uv){
-        return texture2D(uTexB, clamp(uv, 0.001, 0.999)).rgb;
+        return texture2D(uTexB, clamp(edgeUV(uv), 0.001, 0.999)).rgb;
       }
 
       // Choose between the two pictures. Written as a branch rather than an
@@ -1397,8 +1423,30 @@ const FX = {
                — each shape gets its own offset into the picture and its own
                scale, so neighbouring shapes show different parts of it and
                the sheet reads as cut from many prints. */
-            vec2 vo = (vec2(hash(bestId + 11.0), hash(bestId + 17.0)) - 0.5) * 0.30;
-            float vz = 0.84 + hash(bestId + 23.0) * 0.34;
+            /* Zoomed in, never out, and offset only by as much room as the
+               zoom actually leaves.
+
+               This is where the bars along the sides came from. vz used to
+               run from 0.84, and dividing by anything under one *widens* the
+               coordinate range past the edge of the picture — at 0.84 the
+               frame edge asked for -0.095, and a fixed offset of up to 0.15
+               on top took it to about -0.27. tex() clamps its lookup, so
+               every one of those samples came back as the outermost column of
+               pixels, stretched sideways into slabs. Measured against a
+               picture with a magenta border, 5.66% of the frame was smear.
+
+               Clamping is not the bug and mirroring would only disguise it.
+               The fix is to make an out-of-range sample impossible: scale up
+               so there is spare picture on every side, then allow an offset
+               of exactly that spare and no more. Each shape still gets its
+               own view into the picture, which is the whole point of the
+               offset — neighbouring cutouts showing different parts is what
+               stops the sheet reading as one photograph behind a mask. */
+            float vz = 1.16 + hash(bestId + 23.0) * 0.46;
+            // What is left over each side once the view is scaled, less a
+            // reserve for par, which drifts by up to 0.032 of its own accord.
+            float room = max(0.0, 0.5 - 0.5 / vz - 0.035);
+            vec2 vo = (vec2(hash(bestId + 11.0), hash(bestId + 17.0)) - 0.5) * 2.0 * room;
             vec2 suv = (uv - 0.5) / vz + 0.5 + par + vo;
             vec3 shape = pick(suv, uHasTexB > 0.5 ? step(hash(bestId + 2.9), 0.45) : 0.0);
             // Just inside the cut, a hint of the paper's thickness.

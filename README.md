@@ -618,6 +618,74 @@ when the room goes quiet.
 Net for Fields: motion **3.86 → 0.79**, quiet-to-loud range **4.37x**, frame cost down from 140ms to
 122ms.
 
+### Bars along the edges: what a texture does past the end of the picture
+
+Fields grew vertical bars down the sides — one row of pixels stretched
+sideways, which reads as TV static rather than as a picture. Every look that
+displaces its sampling can produce this, and it comes from one line:
+
+```glsl
+return texture2D(uTex, clamp(uv, 0.001, 0.999)).rgb;
+```
+
+Clamping means every request past the edge returns the *same* outermost row of
+pixels, so a single pixel becomes a slab. Measured against a test picture with
+a magenta border and the same aspect as the frame — so cover-fit crops nothing
+and the border really is the edge — **Fields turned 5.7% of the frame into
+smear and Lens 18%**, with Lens' entire top row of circles solid border colour.
+
+There are two causes and they want different fixes.
+
+**Where the overflow is an accident, remove it.** Fields gave each cutout its
+own view into the picture with `vz = 0.84 + hash * 0.34` and an offset of up to
+0.15. Dividing by anything under one *widens* the coordinate range: at 0.84 the
+frame edge asked for -0.095, and the offset took it to about -0.27. Nothing
+wanted that. It now scales up rather than down (`1.16 + hash * 0.46`) and
+offsets by exactly the room the scale leaves, less a reserve for the drift:
+
+```glsl
+float room = max(0.0, 0.5 - 0.5 / vz - 0.035);
+```
+
+An out-of-range sample is now impossible by construction, and the look loses
+nothing — each shape still gets its own view, which is the entire point of the
+offset. Magenta smear: **5.66% to zero.**
+
+**Where the travel is the design, mirror it.** Lens drifts the whole image
+behind its grid, Ribbed parallaxes it behind the glass, Blur reaches a radius
+past every edge. All three are *supposed* to go beyond the picture, and cropping
+them back to fit would have cost Lens about 1.5x zoom to keep its wander. So the
+edge folds instead:
+
+```glsl
+vec2 edgeUV(vec2 p){
+  vec2 q = mod(p, 2.0);          // GLSL mod is non-negative for +y
+  return 1.0 - abs(1.0 - q);     // triangle wave, folded at both ends
+}
+```
+
+What continues past the edge is more picture. A reflected sliver reads as
+picture; a stretched row of pixels reads as a broken screen. Lens **17.94% to
+2.13%**, Ribbed **7.46% to 1.00%**, Blur **3.24% to zero** — and what remains in
+those numbers is the test picture's border being drawn *correctly*, since these
+looks legitimately show the edge of the image.
+
+Two notes on the mechanics. It lives inside `tex()`/`texB()` rather than at each
+call site, because `softTex`'s sixteen-tap spiral goes through `tex()` and that
+is exactly where a blur needs it — mirror is the standard edge rule for a blur
+anyway, where clamp over-weights the edge pixel. And it is done in the shader
+rather than with `MIRRORED_REPEAT`, which would be free in hardware but is not
+available in WebGL1 for non-power-of-two textures, which these are. Cost on the
+software rasterizer used for testing, where ALU is worst-case expensive: Blur
++12%, Ribbed +5%, Lens +4%, Fields +1.5%. On a GPU two extra ALU ops disappear
+behind the texture fetch.
+
+A measurement note: counting border-coloured pixels is only a defect measure for
+looks that should not be showing the border. Sampler, Dots and Punch show the
+picture's own edge by design and score non-zero both before and after; the
+signal is the *change*, and the shape of what is left — a line rather than a
+slab.
+
 ### The style gallery previews the real look, not a picture of it
 
 A name is a poor description. "Cyanotype" and "Ribbed" tell you nothing about what *your* picture
