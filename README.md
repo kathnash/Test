@@ -47,6 +47,18 @@ difference between working on a phone and not.
 throttled: ten paused clips are cheap, ten playing ones are not, and nothing off screen is being
 looked at.
 
+**A slot number is a toggle, not just an assignment.** Tapping the **1** on a tile already showing
+as image one used to reassign slot one to itself — a no-op that gave no way to clear a slot without
+picking something else to replace it. It now clears that slot if the tile already holds it, and sets
+it otherwise, and the two slots are independent: clearing image one leaves whatever is in image two
+exactly where it was. There is deliberately no fallback that promotes the remaining picture into the
+empty slot — the canvas just keeps showing what it already had, and the freed slot is filled again
+the ordinary way, by adding new media or tapping another tile.
+
+**The file picker takes more than one file now.** Drag-and-drop and paste already looped over
+every file handed to them; the OS picker dialog itself was missing the one HTML attribute
+(`multiple`) that tells it to allow more than a single selection.
+
 Ten looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
 without deleting any code. Removing that one word brings a look back.

@@ -216,7 +216,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v77 &middot; 19 Aug 2026</p>
+  <p class="ver" id="ver">v78 &middot; 19 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -227,8 +227,9 @@
       <button class="chip" id="lib-close">Done</button>
     </div>
     <div class="grid" id="lib-grid"></div>
-    <p class="hint">Tap <b>1</b> or <b>2</b> to put a clip on screen. Anything you
-      add is scaled down on the way in, so a large file costs no more than a small one.</p>
+    <p class="hint">Tap <b>1</b> or <b>2</b> to put a clip on screen, tap it again to take it
+      off. Anything you add is scaled down on the way in, so a large file costs no more than
+      a small one.</p>
   </div>
 </div>
 
@@ -258,7 +259,7 @@
   </div>
 </div>
 <div id="drop"><div>Drop artwork to use it</div></div>
-<input type="file" id="file" accept="image/*,video/*" hidden>
+<input type="file" id="file" accept="image/*,video/*" multiple hidden>
 
 <script src="audio.js"></script>
 <script src="fx.js"></script>
@@ -2236,11 +2237,11 @@ function pauseIdleVideos() {
 
 function setSlot(which, i) {
   if (which === 1) {
-    if (slotB === i) slotB = -1;          // a clip cannot be in both at once
-    slotA = i;
+    if (slotA === i) slotA = -1;          // already 1: this click turns it off
+    else { if (slotB === i) slotB = -1; slotA = i; }   // a clip cannot be in both at once
   } else {
-    if (slotA === i) slotA = -1;
-    slotB = i;
+    if (slotB === i) slotB = -1;
+    else { if (slotA === i) slotA = -1; slotB = i; }
   }
   applySlots();
 }
@@ -2299,10 +2300,11 @@ function paintLibrary() {
     const slots = document.createElement('div');
     slots.className = 'slots';
     [1, 2].forEach(n => {
+      const on = (n === 1 ? slotA : slotB) === i;
       const btn = document.createElement('button');
       btn.textContent = n;
-      btn.className = (n === 1 ? slotA : slotB) === i ? 'on' : '';
-      btn.title = 'Show as image ' + n;
+      btn.className = on ? 'on' : '';
+      btn.title = (on ? 'Take off as image ' : 'Show as image ') + n;
       btn.onclick = () => setSlot(n, i);
       slots.appendChild(btn);
     });
