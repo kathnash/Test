@@ -201,7 +201,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v74 &middot; 18 Aug 2026</p>
+  <p class="ver" id="ver">v75 &middot; 19 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -538,7 +538,7 @@ const TINY_W = 7;
 
 let W = 0, H = 0, DPR = 1, LOW = 132;
 let VIGNETTE = null, GRAIN_SHEET = null;
-let LINEN_TEX = null, PAINT_TEX = null, POSTER_BUF = null;
+let PAPER_TEX = null, INK_TEX = null, PINHOLE_TEX = null, POSTER_BUF = null;
 
 function renderTiny() {
   if (!SRC.width) return;
@@ -568,83 +568,122 @@ function resize() {
   VIGNETTE.addColorStop(0, 'rgba(0,0,0,0)');
   VIGNETTE.addColorStop(1, 'rgba(0,0,0,1)');
 
-  /* Poster's analog surface, in two sheets rather than one.
+  /* Poster's printed surface.
 
-     The first attempt put weave and paint into a single sheet and laid it
-     over the finished frame. That gave long strokes crossing the flat ground
-     between the blocks, which reads as scratches on the picture rather than
-     as paint on the blocks — the texture has to belong to the tiles, and the
-     ground has to be bare cloth.
+     What was here before was oil paint on linen and it was wrong twice over.
+     The weave was a one-pixel light-or-dark line every two to three pixels —
+     measured on the finished frame as 108, 102, 108, 111, 108 across the
+     ground — which is a periodic pattern sitting right at the sampling limit.
+     Anything that resamples it (a HiDPI screen, browser zoom, a video
+     encoder) beats it into a coarse visible grid, which is exactly the graph
+     paper the weave was written to avoid. And the paint was oriented dashes
+     long enough to be seen individually, so it read as scratches on the
+     blocks rather than as a surface under them.
 
-     Both are drawn transparent, carrying only their marks. That is what lets
-     the paint be composited with source-atop later: it lands on the blocks
-     and nowhere else, and because it is strokes over transparency rather
-     than a tinted sheet, the colour underneath survives.
+     Two rules come out of that, and everything below obeys them:
 
-     Screen-fixed on purpose. Real paint belongs to the surface, not to the
-     shapes: letting it travel with the cells would read as the paint sliding
-     about, where holding it still reads as blocks laid onto a canvas. */
-  const TW = Math.max(1, Math.round(W)), TH = Math.max(1, Math.round(H));
+     - Nothing periodic, and nothing directional. Grain is isotropic noise;
+       the only large-scale structure is far coarser than the pixel grid, so
+       there is no frequency for a rescale to beat against.
+     - Built at device resolution, not in CSS pixels. The old sheets were
+       made at W x H and then drawn through the DPR transform, so on a phone
+       every thread was blown up two or three times and blurred.
 
-  LINEN_TEX = document.createElement('canvas');
-  LINEN_TEX.width = TW; LINEN_TEX.height = TH;
-  const lx = LINEN_TEX.getContext('2d');
-  /* Threads, not a grid. Even spacing at even opacity reads as graph paper,
-     which is exactly what cloth does not look like: a weave is regular in
-     the large and irregular in every particular. So the spacing wanders by a
-     pixel, the opacity varies thread to thread, and roughly one in seven is
-     skipped altogether — a slub in the yarn. */
-  const thread = (horiz) => {
-    let i = 0;
-    while (i < (horiz ? TH : TW)) {
-      i += 2 + ((Math.random() * 2.4) | 0);
-      if (Math.random() < 0.14) continue;
-      const light = Math.random() < 0.30;
-      lx.globalAlpha = (light ? 0.030 : 0.055) * (0.55 + Math.random() * 0.9);
-      lx.fillStyle = light ? '#ffffff' : '#000000';
-      if (horiz) lx.fillRect(0, i, TW, 1);
-      else lx.fillRect(i, 0, 1, TH);
-    }
-  };
-  thread(true); thread(false);
-  lx.globalAlpha = 1;
+     The process is screenprint, which is the one that actually produces flat
+     hard-edged blocks of colour: paper tooth over the whole sheet, ink that
+     lies unevenly across a pull, and the odd pinhole where it did not take.
+  */
 
-  /* The paint. Short strokes, not long ones — impasto is a loaded brush put
-     down and lifted, and anything long enough to cross a block reads as a
-     drag mark. Each patch takes its own direction at a scale near a cell but
-     deliberately not locked to the grid: paint that lines up with the blocks
-     looks like a filter, paint that ignores them looks like paint.
-
-     Every stroke is drawn twice, white just to one side and black just to
-     the other, which is what makes a ridge rather than a smear — a raised
-     edge catches light on one flank and shades on the other. */
-  PAINT_TEX = document.createElement('canvas');
-  PAINT_TEX.width = TW; PAINT_TEX.height = TH;
-  const ax = PAINT_TEX.getContext('2d');
-  ax.lineCap = 'round';
-  const B = 54;
-  for (let by = -B; by < TH + B; by += B) {
-    for (let bx = -B; bx < TW + B; bx += B) {
-      const ang = Math.random() * Math.PI;
-      const ca = Math.cos(ang), sa = Math.sin(ang);
-      for (let n = 0; n < 16; n++) {
-        const cx = bx + Math.random() * B, cy = by + Math.random() * B;
-        const len = B * (0.16 + Math.random() * 0.30);
-        const off = 0.9 + Math.random() * 0.7;
-        ax.lineWidth = 1.6 + Math.random() * 3.2;
-        ax.globalAlpha = 0.045 + Math.random() * 0.055;
-        for (const [col, dx, dy] of [['#ffffff', sa * off, -ca * off],
-                                     ['#000000', -sa * off, ca * off]]) {
-          ax.strokeStyle = col;
-          ax.beginPath();
-          ax.moveTo(cx - ca * len / 2 + dx, cy - sa * len / 2 + dy);
-          ax.lineTo(cx + ca * len / 2 + dx, cy + sa * len / 2 + dy);
-          ax.stroke();
-        }
+  /* Paper tooth. A tile of device pixels rather than a full-frame sheet:
+     noise has no lines to line up, so a repeat is invisible in a way a weave
+     never is, and this costs one 256px square instead of several megapixels
+     every resize. */
+  PAPER_TEX = document.createElement('canvas');
+  PAPER_TEX.width = 256; PAPER_TEX.height = 256;
+  {
+    const px = PAPER_TEX.getContext('2d');
+    /* Two scales, because one is what makes noise look digital. Per-pixel
+       white noise on its own is sand — every speck the same size, none of
+       them related to its neighbours, which is a sensor and not a surface.
+       Paper has fibre in it: specks clump. So the tooth is mostly a coarse
+       layer generated at a quarter resolution and smoothed up, giving lumps
+       three or four pixels across, with a fainter per-pixel layer on top for
+       the fine bite. */
+    const mk = (n, lo, hi) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = n;
+      const x = c.getContext('2d');
+      const im = x.createImageData(n, n);
+      const dd = im.data;
+      for (let i = 0; i < dd.length; i += 4) {
+        // Light and dark specks in one sheet, so the tooth reads as a
+        // surface catching light rather than as dirt.
+        const up = Math.random() < 0.5;
+        dd[i] = dd[i+1] = dd[i+2] = up ? 255 : 0;
+        dd[i+3] = lo + Math.random() * (up ? hi : hi * 1.15);
       }
-    }
+      x.putImageData(im, 0, 0);
+      return c;
+    };
+    // Amplitudes are small on purpose. The first pass ran to an alpha of 30
+    // and read as heavy grain over the whole print; this is roughly a third
+    // of that, which is felt at arm's length and only found if you look.
+    px.imageSmoothingEnabled = true;
+    px.drawImage(mk(64, 0, 11), 0, 0, 256, 256);
+    px.drawImage(mk(256, 0, 6), 0, 0);
   }
-  ax.globalAlpha = 1;
+
+  /* How evenly the ink went down. Twenty-odd cells of random grey, blown up
+     across the whole frame with smoothing on, which gives soft blobs a few
+     hundred pixels across — the scale of a squeegee pass, not of a texture.
+     Kept small and upscaled at draw time rather than baked out to full size:
+     the smoothing is the point, and a big sheet would only store the same
+     information in a thousand times the memory. */
+  {
+    const seed = document.createElement('canvas');
+    seed.width = 22; seed.height = 13;
+    const ix = seed.getContext('2d');
+    const im = ix.createImageData(22, 13);
+    const dd = im.data;
+    for (let i = 0; i < dd.length; i += 4) {
+      const up = Math.random() < 0.5;
+      dd[i] = dd[i+1] = dd[i+2] = up ? 255 : 0;
+      dd[i+3] = Math.random() * Math.random() * (up ? 40 : 52);
+    }
+    ix.putImageData(im, 0, 0);
+    /* Blown up once, here, rather than at every draw. Upscaling twenty-two
+       by thirteen pixels to a full frame with high-quality smoothing is not
+       cheap, and Poster was doing it twice a frame — once over the ground
+       and once over the blocks — which took the look from 16.7ms a frame to
+       58.2. Baked to a sheet it is two ordinary 1:1 draws. */
+    INK_TEX = document.createElement('canvas');
+    INK_TEX.width = Math.max(1, Math.round(W));
+    INK_TEX.height = Math.max(1, Math.round(H));
+    const kx = INK_TEX.getContext('2d');
+    kx.imageSmoothingEnabled = true; kx.imageSmoothingQuality = 'high';
+    kx.drawImage(seed, 0, 0, INK_TEX.width, INK_TEX.height);
+  }
+
+  /* Pinholes — the specks where the screen was blocked and no ink arrived.
+     Sparse enough to be an accident rather than a texture: about one per
+     three thousand square pixels, which is a handful per block. */
+  PINHOLE_TEX = document.createElement('canvas');
+  PINHOLE_TEX.width = cv.width; PINHOLE_TEX.height = cv.height;
+  {
+    // At the backing size and drawn back at W x H, so a speck is the size it
+    // was drawn on every screen instead of being blown up on a phone.
+    const hx = PINHOLE_TEX.getContext('2d');
+    hx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const n = Math.round(W * H / 3000);
+    for (let i = 0; i < n; i++) {
+      hx.globalAlpha = 0.05 + Math.random() * 0.13;
+      hx.fillStyle = '#ffffff';
+      hx.beginPath();
+      hx.arc(Math.random() * W, Math.random() * H, 0.4 + Math.random() * 1.1, 0, 6.2832);
+      hx.fill();
+    }
+    hx.globalAlpha = 1;
+  }
 
   // Where the blocks are painted before the paint texture is applied to
   // them. Same backing size and transform as the main canvas.
@@ -1039,9 +1078,16 @@ function drawPoster(dt) {
   const dom = (ART.raw && ART.raw[0]) || ART.palette[0] || [90, 90, 110];
   g.fillStyle = `rgb(${dom[0]|0},${dom[1]|0},${dom[2]|0})`;
   g.fillRect(0, 0, W, H);
-  // Bare cloth, over the ground only — the blocks get their own texture
-  // below and would otherwise be woven through twice.
-  if (LINEN_TEX) g.drawImage(LINEN_TEX, 0, 0, W, H);
+  // The ground is a printed colour too, so it gets the same uneven ink as
+  // the blocks. Nothing else goes on here — the paper tooth is laid over
+  // the whole sheet at the end, ground and blocks together, because one
+  // surface under everything is what makes it read as a single print
+  // rather than as blocks with a texture on them.
+  if (INK_TEX) {
+    g.globalAlpha = 0.75;
+    g.drawImage(INK_TEX, 0, 0, W, H);
+    g.globalAlpha = 1;
+  }
 
   // Blocks are painted into their own layer so the paint texture can be
   // confined to them. Without it there is no way to say "this mark belongs
@@ -1130,14 +1176,28 @@ function drawPoster(dt) {
   d.imageSmoothingEnabled = true;
 
   if (POSTER_BUF) {
-    // source-atop: the strokes land only where a block already is, and
-    // nowhere on the cloth between them.
-    if (PAINT_TEX) {
-      d.globalCompositeOperation = 'source-atop';
-      d.drawImage(PAINT_TEX, 0, 0, W, H);
-      d.globalCompositeOperation = 'source-over';
-    }
+    // source-atop: the ink lands only where a block already is, and nowhere
+    // on the ground between them — which is what lets the blocks be unevenly
+    // inked without the gaps between them picking up the same blotches and
+    // giving the whole thing away as one sheet laid over the top.
+    d.globalCompositeOperation = 'source-atop';
+    if (INK_TEX) d.drawImage(INK_TEX, 0, 0, W, H);
+    if (PINHOLE_TEX) d.drawImage(PINHOLE_TEX, 0, 0, W, H);
+    d.globalCompositeOperation = 'source-over';
     g.drawImage(POSTER_BUF, 0, 0, W, H);
+  }
+
+  /* Paper tooth, over the finished sheet. Drawn on the identity transform so
+     one tile pixel is one device pixel: through the DPR transform it would
+     be stretched two or three times on a phone, which is how the old weave
+     ended up blurred as well as periodic. */
+  if (PAPER_TEX) {
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    const t = PAPER_TEX.width;
+    for (let y = 0; y < cv.height; y += t)
+      for (let x = 0; x < cv.width; x += t) g.drawImage(PAPER_TEX, x, y);
+    g.restore();
   }
   g.imageSmoothingEnabled = true;
 }

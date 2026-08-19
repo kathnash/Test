@@ -773,36 +773,57 @@ reference still let 4 strikes through the held passage where the high-water mark
 | beat-driven | 30 | **11** |
 | long held note | 37 | **0** |
 
-#### Poster's analog surface
+#### Poster's printed surface, and how the first one failed
 
-Thick paint on linen, without touching which cells appear or how they move. Two sheets, built once
-per resize at frame size rather than tiled so there are no seams to line up, and both drawn
-*transparent* — carrying only their marks, not a tint.
+Poster is a screenprint: paper tooth over the whole sheet, ink that lies unevenly across a pull, and
+the odd pinhole where it did not take. None of it touches which cells appear or how they move.
 
-**The texture has to belong to the tiles.** The first attempt put weave and paint into one sheet and
-laid it over the finished frame, which gave long strokes crossing the flat ground between the blocks
-— scratches on the picture rather than paint on the blocks. The blocks are drawn into their own
-layer now and the paint applied with `source-atop`, so it lands on them and nowhere else. Because
-the sheet is strokes over transparency rather than a tinted overlay, the palette survives intact.
+**It was oil paint on linen first, and that was wrong twice over.** Worth recording because both
+failures are the kind that look fine in the code:
 
-**A ridge is two strokes, not one.** Every mark is drawn twice, white just to one side and black
-just to the other: a raised edge catches light on one flank and shades on the other, where a single
-stroke only ever smears. Strokes are kept short — impasto is a loaded brush put down and lifted, and
-anything long enough to cross a block reads as a drag mark. Direction changes on a patch scale near
-a cell but deliberately not locked to the grid: paint that lines up with the blocks looks like a
-filter, paint that ignores them looks like paint.
+- *The weave sat at the sampling limit.* Measured across the finished ground it was a one-pixel
+  light-or-dark line every two to three pixels — `108, 102, 108, 111, 108`. A periodic pattern that
+  fine has nowhere to go: anything that resamples it (a HiDPI screen, browser zoom, a video encoder)
+  beats it into a coarse visible grid, which is precisely the graph paper the code comment claimed
+  to be avoiding. It was also built in CSS pixels and drawn through the DPR transform, so on a phone
+  every thread was blown up two or three times and blurred as well.
+- *The paint was dashes long enough to see individually.* Oriented strokes at ~20px read as scratches
+  on the blocks, not as a surface under them. Impasto at arm's length is sub-pixel; anything you can
+  point at is damage.
 
-**A weave is regular in the large and irregular in every particular.** Even spacing at even opacity
-is graph paper. The threads wander by a pixel, vary in opacity, and roughly one in seven is skipped.
+So two rules, which everything now obeys: **nothing periodic and nothing directional** — grain is
+isotropic noise, and the only large-scale structure is far coarser than the pixel grid, so there is
+no frequency for a rescale to beat against; and **built at device resolution**, drawn on the
+identity transform so one tile pixel is one device pixel.
 
-**And the texture is screen-fixed.** Real paint belongs to the surface, not to the shapes: letting
-it travel with the cells reads as the paint sliding about. Edge jitter is drawn from a fixed table
-by cell index for the same reason — a jitter rolled per frame makes every edge crawl. It is applied
-to the edges rather than the position, so a block sits exactly where the animation puts it and only
-its cut is irregular.
+**Paper tooth is two scales, because one is what makes noise look digital.** Per-pixel white noise
+is sand — every speck the same size, none related to its neighbours, which is a sensor and not a
+surface. Paper has fibre in it and specks clump. The tooth is mostly a layer generated at a quarter
+resolution and smoothed up, giving lumps three or four pixels across, with a fainter per-pixel layer
+for the fine bite. Amplitude is about a third of the first attempt, which read as heavy grain over
+the entire print.
 
-Measured, on-screen motion is unchanged: mean 3.88 before against 3.77 after, which is noise. Frame
-cost 16.7ms to 26.6ms — still four times cheaper than any other look.
+**Ink lies unevenly, at the scale of a squeegee pass.** Twenty-two by thirteen cells of random grey
+blown up across the frame, so the blobs are a few hundred pixels across — felt as an uneven pull,
+not seen as a texture. It goes onto the blocks with `source-atop` and onto the ground separately, so
+the gaps between blocks do not pick up the same blotches and give it away as one sheet laid over the
+top. The paper tooth, by contrast, goes over *everything* at the end: one surface under ground and
+ink alike is what makes it read as a single printed sheet.
+
+**Edge jitter is drawn from a fixed table by cell index** — a jitter rolled per frame makes every
+edge crawl. It is applied to the edges rather than the position, so a block sits exactly where the
+animation puts it and only its cut is irregular.
+
+**Bake anything you would otherwise upscale every frame.** Blowing 22x13 pixels up to a full frame
+with high-quality smoothing is not cheap, and Poster was doing it twice a frame — once over the
+ground, once over the blocks. That alone took the look from **16.7ms to 58.2ms** a frame. Baked to
+a sheet once per resize it is two ordinary 1:1 draws and the cost went straight back to **16.7ms**,
+identical to before any of this existed. The tooth tiles are free by comparison: twenty-four 256px
+draws did not move the number at all.
+
+Periodicity is gone by measurement, not by eye: autocorrelation of a ground row now decays smoothly
+from 0.983 across lags one to eight, with no oscillation — a low-frequency field, where the weave
+gave alternating sign at lag one and two.
 
 #### A threshold on a decaying flag is a frame-rate test
 
