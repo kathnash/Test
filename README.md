@@ -25,8 +25,8 @@ In `index.html`: three visual modes and four palettes. Space cycles mode, `C` cy
 `F` toggles fullscreen. The HUD hides itself after a few seconds.
 
 In `album.html`: drop images or clips on the page, paste them, or open **Media** and add them there
-— several at once is fine. **Space** cycles the look, **X** shuffles the media, **M** opens the
-library, `F` toggles fullscreen.
+— several at once is fine. **Space** cycles the look, **G** opens the style gallery, **X** shuffles
+the media, **M** opens the library, `F` toggles fullscreen.
 
 ### A library, not two slots
 
@@ -617,6 +617,47 @@ when the room goes quiet.
 
 Net for Fields: motion **3.86 → 0.79**, quiet-to-loud range **4.37x**, frame cost down from 140ms to
 122ms.
+
+### The style gallery previews the real look, not a picture of it
+
+A name is a poor description. "Cyanotype" and "Ribbed" tell you nothing about what *your* picture
+will do in them, so the picker is a grid of live previews: the actual look, drawing the picture
+that is on screen, in the state the music has it in at that moment.
+
+Which means rendering ten looks that are not the current one, every one of which draws to the same
+canvas the page is showing. Two things make that invisible:
+
+- **The gallery is a full-screen panel over the canvas**, so the one frame in which a foreign look
+  is drawn is behind an opaque sheet. There is nothing to see.
+- **One preview per frame, not ten in a row.** Ten looks back to back is a visible stall on a
+  phone; one a frame fills the grid in about a sixth of a second with no hitch, and the previews
+  appearing one after another reads as loading rather than as freezing.
+
+Only the looks in the picker are previewed, and that is load-bearing rather than tidy: Drift, Swirl
+and Glitch are the three that run on the feedback buffers, so drawing one out of turn would leave
+the *current* look's trail buffer full of someone else's frame. Everything in the picker draws from
+scratch each frame, so there is no state to corrupt. No body-class change and no `FX.resize` are
+needed either — a hidden canvas still renders, and `FX.render` re-sizes itself when handed a mode
+it did not last draw.
+
+**A one-frame render exposes anything that eases in.** Sampler's swatches start grey and ease toward
+the colour under their circle over about a third of a second — invisible in use, but a preview *is*
+that third of a second, so Sampler advertised itself with five grey rectangles. The first reading is
+now taken whole and only later ones are smoothed. Anything whose look is an accumulated state has
+this problem in previews; the fix belongs in the look, not in the gallery.
+
+**A pending cell is held back, not shown.** An undrawn preview is filled with the artwork's dark
+colour, which on a dark picture is indistinguishable from a real preview of a dark look. Pending
+cells sit at 12% opacity and fade in when they have something in them, so waiting looks like
+waiting rather than like a broken style.
+
+And a measurement lesson, because it nearly cost an afternoon: the first test screenshotted the
+gallery after a fixed 2.5 seconds and Cyanotype came back blank, which looked exactly like a bug in
+that one look. It was not. Under SwiftShader a shader frame takes ~300ms against ~16ms on a real
+GPU, so ten previews had not finished — and the pixel-statistics check that ran *after* the
+screenshot disagreed with it, because by then they had. **The test was racing the thing it was
+measuring.** Waiting on `thumbQueue.length === 0` rather than on a guessed interval makes it
+deterministic, and all ten previews were correct all along.
 
 ### Sampler: the only thing that moves is where the colour is taken from
 

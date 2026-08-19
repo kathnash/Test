@@ -151,21 +151,36 @@
   #swatches{ display:flex; gap:4px; align-items:center; }
   #swatches i{ width:15px; height:15px; border-radius:4px; display:block; box-shadow:0 0 0 1px rgba(255,255,255,.15) inset; }
 
-  #lookmenu{
-    position:fixed; z-index:22; left:14px; bottom:60px; max-width:calc(100vw - 24px);
-    display:none; flex-direction:column; gap:2px; padding:6px;
-    border-radius:14px; border:1px solid var(--line); background:var(--panel);
-    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
-    max-height:60vh; overflow-y:auto;
-  }
-  #lookmenu.on{ display:flex; }
-  #lookmenu button{
-    appearance:none; cursor:pointer; text-align:left; white-space:nowrap;
-    padding:9px 16px; border-radius:9px; border:0; background:transparent;
-    color:var(--ui); font:inherit; font-size:13.5px;
-  }
-  #lookmenu button:hover{ background:rgba(255,255,255,.10); }
-  #lookmenu button[aria-current="true"]{ background:rgba(255,255,255,.9); color:#0a0a0d; }
+  /* The style gallery. Same panel language as the media library, because
+     they answer the same kind of question — which of these do I want. */
+  #styles{ position:fixed; inset:0; z-index:40; display:none;
+        background:rgba(6,6,10,.82); backdrop-filter:blur(10px);
+        align-items:flex-end; justify-content:center; }
+  #styles.show{ display:flex; }
+  #styles .panel{ width:min(880px,100%); max-height:86vh; overflow:auto;
+    background:#0e0e14; border-radius:20px 20px 0 0; padding:18px 16px 22px;
+    box-shadow:0 -20px 60px rgba(0,0,0,.6); }
+  #styles .head{ display:flex; align-items:center; gap:10px; margin:0 2px 14px; }
+  #styles .ttl{ font-size:15px; letter-spacing:.02em; flex:1; }
+  #styles .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(148px,1fr));
+    gap:12px; }
+  #styles .cell{ appearance:none; padding:0; border:0; background:transparent;
+    cursor:pointer; color:var(--ui); font:inherit; text-align:left; }
+  #styles .shot{ position:relative; border-radius:12px; overflow:hidden;
+    background:#191922; box-shadow:0 0 0 1px rgba(255,255,255,.10) inset; }
+  #styles .shot canvas{ width:100%; height:auto; display:block;
+    opacity:1; transition:opacity .32s ease; }
+  /* Until a preview has been drawn its canvas is the artwork's dark colour,
+     which on a dark picture is indistinguishable from a real preview. Held
+     back until it has something in it, so waiting looks like waiting. */
+  #styles .cell.pending .shot canvas{ opacity:.12; }
+  #styles .cell[aria-current="true"] .shot{ box-shadow:0 0 0 2px #f2f2f4; }
+  #styles .nm{ display:block; font-size:12.5px; padding:7px 2px 0;
+    color:rgba(255,255,255,.62); letter-spacing:.01em; }
+  #styles .cell[aria-current="true"] .nm{ color:var(--ui); }
+  #styles .hint{ color:rgba(255,255,255,.34); font-size:11.5px; margin:16px 2px 0;
+    line-height:1.5; }
+  #styles .hint b{ color:rgba(255,255,255,.6); font-weight:600; }
 
   #drop{
     position:fixed; inset:0; z-index:40; display:none;
@@ -201,7 +216,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v75 &middot; 19 Aug 2026</p>
+  <p class="ver" id="ver">v76 &middot; 19 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -231,7 +246,17 @@
   <button class="chip" id="restart">Audio source</button>
 </div>
 
-<div id="lookmenu"></div>
+<div id="styles" aria-hidden="true">
+  <div class="panel">
+    <div class="head">
+      <span class="ttl">Style</span>
+      <button class="chip" id="styles-close">Done</button>
+    </div>
+    <div class="grid" id="styles-grid"></div>
+    <p class="hint">Every preview is your own picture, drawn by that style, right now —
+      so what you see is what you get. <b>Space</b> steps through them without opening this.</p>
+  </div>
+</div>
 <div id="drop"><div>Drop artwork to use it</div></div>
 <input type="file" id="file" accept="image/*,video/*" hidden>
 
@@ -470,6 +495,7 @@ function applyArtwork(img, title = '', artist = '', isVideo = false) {
   buildPoster();
   seedBlobs();
   paintSwatches();
+  staleThumbs();
   FX.setSource(SRC, SRC.width, SRC.height);
 
   const np = document.getElementById('np');
@@ -524,6 +550,7 @@ function sampleArtwork() { return loadImage(SAMPLE_SRC); }
    ===================================================================== */
 const cv = document.getElementById('c');
 const g  = cv.getContext('2d', { alpha: false });
+const fxCanvas = document.getElementById('fxc');
 const LO = document.createElement('canvas');
 const lg = LO.getContext('2d');
 
@@ -702,6 +729,7 @@ function resize() {
   renderTiny();
   buildPoster();
   seedBlobs();
+  if (stylesEl.classList.contains('show')) openStyles();   // thumbs are sized to the frame
 }
 addEventListener('resize', resize);
 addEventListener('orientationchange', () => setTimeout(resize, 250));
@@ -1252,6 +1280,7 @@ const SAMPLERS = [
   seed: [0.7 + i * 1.31, 2.3 + i * 0.87, 4.1 + i * 1.09],
   ph: i * 1.23,          // integrated, never time * rate — see below
   r: 128, g: 128, b: 128,  // the swatch colour, smoothed
+  init: false,             // first reading is taken whole, not eased into
   drv: 0,                  // smoothed drive for this band
   lo: 0.25, hi: 0.35,      // its own slow floor and ceiling
   cx: 0, cy: 0
@@ -1387,7 +1416,14 @@ function drawSampler(dt) {
       // Smoothed, or video noise makes the swatch shimmer. The constant
       // shortens as the circle speeds up, so a fast pass still reports what
       // it went over instead of averaging the lot into mud.
-      const k = 1 - Math.exp(-dt / (0.30 / (1 + s.drv * 2.5)));
+      //
+      // Except for the very first reading, which is taken whole. Easing from
+      // the starting grey is a third of a second of the chips being the
+      // wrong colour, and the style gallery draws exactly one frame of this
+      // look — so in the preview that third of a second was the entire thing
+      // and Sampler advertised itself with five grey rectangles.
+      const k = s.init ? 1 - Math.exp(-dt / (0.30 / (1 + s.drv * 2.5))) : 1;
+      s.init = true;
       s.r += (SAMP.data[o]     - s.r) * k;
       s.g += (SAMP.data[o + 1] - s.g) * k;
       s.b += (SAMP.data[o + 2] - s.b) * k;
@@ -2013,6 +2049,7 @@ function frame(now) {
     strikeBuf[i * 3 + 1] = strikeY[i];
     strikeBuf[i * 3 + 2] = strikeAmt[i];
   }
+  stepThumbs();
   armStillIfAsked();
   if (LOOKS[look].fx) {
     drawFX(LOOKS[look]);
@@ -2392,18 +2429,114 @@ document.getElementById('sens').onclick = e => {
   sens = (sens + 1) % SENS.length;
   e.target.textContent = SENS_NAME[sens];
 };
-const lookMenu = document.getElementById('lookmenu');
+/* =====================================================================
+   STYLE GALLERY
+
+   A name is a poor description of a look — "Cyanotype" and "Ribbed" tell you
+   nothing about what your own picture will do in them. So every entry is a
+   live preview: the real look, drawing the picture that is on screen, in the
+   state the music has it in at that moment.
+
+   Which means rendering ten looks that are not the current one. Two things
+   make that safe and unnoticeable:
+
+   - The gallery is a full-screen panel over the canvas, so the one frame in
+     which a foreign look is drawn is behind an opaque sheet. There is
+     nothing to see.
+   - They are rendered one per frame rather than all at once. Ten looks in a
+     row would be a visible stall on a phone; one a frame fills the grid in
+     about a sixth of a second with no hitch at all, and the previews appear
+     progressively, which reads as loading rather than as freezing.
+
+   Only the visible looks are previewed, and that matters for more than tidy
+   ness: Drift, Swirl and Glitch are the three that run on the feedback
+   buffers, so drawing one of them out of turn would leave the *current*
+   look's trail buffer full of someone else's frame. Every look in the picker
+   draws from scratch each frame, so there is no state to corrupt.
+   ===================================================================== */
+const stylesEl = document.getElementById('styles');
+const stylesGrid = document.getElementById('styles-grid');
+const STYLE_THUMB = [];     // by look index: { canvas, ctx, cell }
+let thumbQueue = [];        // look indices still to draw, one per frame
+
+// Wide enough to read the look, small enough that ten of them cost nothing.
+const THUMB_W = 168;
+
 function buildLookMenu() {
-  lookMenu.innerHTML = '';
+  stylesGrid.innerHTML = '';
+  STYLE_THUMB.length = 0;
+  const th = Math.max(60, Math.round(THUMB_W * H / Math.max(1, W)));
   LOOKS.forEach((L, i) => {
     if (L.hidden) return;
-    const b = document.createElement('button');
-    b.textContent = L.name;
-    b.setAttribute('aria-current', String(i === look));
-    b.onclick = () => { setLookIndex(i); lookMenu.classList.remove('on'); };
-    lookMenu.appendChild(b);
+    const cell = document.createElement('button');
+    cell.className = 'cell pending';
+    cell.setAttribute('aria-current', String(i === look));
+    const shot = document.createElement('div');
+    shot.className = 'shot';
+    const c = document.createElement('canvas');
+    c.width = THUMB_W; c.height = th;
+    const cx = c.getContext('2d');
+    cx.fillStyle = ART.dark || '#15151c';
+    cx.fillRect(0, 0, THUMB_W, th);
+    shot.appendChild(c);
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = L.name;
+    cell.appendChild(shot); cell.appendChild(nm);
+    cell.onclick = () => { setLookIndex(i); closeStyles(); };
+    stylesGrid.appendChild(cell);
+    STYLE_THUMB[i] = { canvas: c, ctx: cx, cell };
   });
 }
+
+/* One look, drawn once, captured. It runs inside the frame callback because
+   that is the only moment a shader canvas can be read — after the draw and
+   before the browser composites it away. */
+function stepThumbs() {
+  if (!thumbQueue.length) return;
+  const i = thumbQueue.shift();
+  const ent = STYLE_THUMB[i];
+  if (!ent || !LOOKS[i]) return;
+  const keep = look;
+  look = i;
+  try {
+    // No body class change and no FX.resize: a hidden canvas still renders,
+    // and FX.render already re-sizes itself when the mode it is handed
+    // differs from the one it last drew.
+    if (LOOKS[i].fx) drawFX(LOOKS[i]);
+    else drawScene(1 / 60);
+    ent.ctx.drawImage(LOOKS[i].fx ? fxCanvas : cv,
+                      0, 0, ent.canvas.width, ent.canvas.height);
+    ent.cell.classList.remove('pending');
+  } catch (e) { /* leave it held back rather than showing a false preview */ }
+  look = keep;
+}
+
+// Marked stale rather than redrawn on the spot: the pictures change while
+// the gallery is shut far more often than it is opened.
+function staleThumbs() { if (stylesEl.classList.contains('show')) queueThumbs(); }
+function queueThumbs() {
+  thumbQueue = LOOKS.map((L, i) => (L.hidden ? -1 : i)).filter(i => i >= 0);
+  // The one you are looking at first, so the grid starts with the one you can
+  // check against the screen behind it. Moved rather than sorted: a
+  // comparator that answers only about one element is not a total order, and
+  // an inconsistent comparator is free to return any permutation at all.
+  const j = thumbQueue.indexOf(look);
+  if (j > 0) thumbQueue.unshift(thumbQueue.splice(j, 1)[0]);
+}
+function openStyles() {
+  buildLookMenu();
+  queueThumbs();
+  stylesEl.classList.add('show');
+  stylesEl.setAttribute('aria-hidden', 'false');
+}
+function closeStyles() {
+  thumbQueue.length = 0;
+  stylesEl.classList.remove('show');
+  stylesEl.setAttribute('aria-hidden', 'true');
+}
+document.getElementById('styles-close').onclick = closeStyles;
+stylesEl.onclick = e => { if (e.target === stylesEl) closeStyles(); };
 function setLookIndex(i) {
   // The recorder is bound to whichever canvas the current style draws to, and
   // the two swap when a 2D style and a shader style trade places.
@@ -2421,29 +2554,11 @@ function setLookIndex(i) {
   }
   document.getElementById('look').textContent = 'Style: ' + LOOKS[look].name;
   paintTone();
-  buildLookMenu();
+  // Only the selection marker moves. Rebuilding the grid here would throw
+  // away every preview each time Space is pressed.
+  STYLE_THUMB.forEach((e2, j) => e2 && e2.cell.setAttribute('aria-current', String(j === look)));
 }
-document.getElementById('look').onclick = e => {
-  e.stopPropagation();
-  buildLookMenu();
-  lookMenu.classList.toggle('on');
-  if (lookMenu.classList.contains('on')) placeLookMenu(e.currentTarget);
-};
-
-// The menu was pinned to the left edge of the page, so on a wrapped HUD it
-// could open a long way from the button that produced it. It now sits over
-// its own button, clamped to stay on screen. Measured after the menu is
-// visible, because a display:none element has no width to clamp against.
-function placeLookMenu(btn) {
-  const b = btn.getBoundingClientRect();
-  const w = lookMenu.offsetWidth;
-  const max = innerWidth - w - 12;
-  lookMenu.style.left = Math.round(Math.max(12, Math.min(b.left, max))) + 'px';
-  lookMenu.style.bottom = Math.round(innerHeight - b.top + 8) + 'px';
-}
-addEventListener('pointerdown', e => {
-  if (!lookMenu.contains(e.target) && e.target.id !== 'look') lookMenu.classList.remove('on');
-});
+document.getElementById('look').onclick = openStyles;
 /* =====================================================================
    RECORDING
 
@@ -2501,7 +2616,7 @@ function armStillIfAsked() {
 }
 
 function stillFromCanvas() {
-  const target = LOOKS[look].fx ? document.getElementById('fxc') : cv;
+  const target = LOOKS[look].fx ? fxCanvas : cv;
   // Synchronous read. toBlob defers, and by the time it runs the buffer this
   // is trying to capture may already have been cleared.
   const url = target.toDataURL('image/png');
@@ -2646,7 +2761,8 @@ addEventListener('keydown', e => {
   // it, unshifted on every layout, and not claimed by the browser.
   if (e.key.toLowerCase() === 'x') shuffleMedia();
   if (e.key.toLowerCase() === 'm') document.getElementById('media').click();
-  if (e.key === 'Escape') document.getElementById('lib-close').click();
+  if (e.key.toLowerCase() === 'g') openStyles();
+  if (e.key === 'Escape') { closeStyles(); document.getElementById('lib-close').click(); }
 });
 
 // --- boot -------------------------------------------------------------
