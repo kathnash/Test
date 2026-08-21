@@ -112,11 +112,11 @@ it: with one picture loaded they all work exactly as before.
   with drifting phases, which gives a smooth closed curve that never settles for a few instructions
   — an fbm around each rim would cost a dozen hashes per blob and this runs nine times per pixel.
   Without the flat-colour shapes the whole sheet reads as one picture behind a mask.
-- **Chomp** — the media as a leaf, eaten through by the music: a union of a handful of wobbly,
-  irregular blobs (Fields' construction, with the nearest-blob partition swapped for a smooth
-  minimum, so bites merge into each other instead of staying separate windows), each with a browned
-  rim where the tissue has gone. No second picture reveals a soft backlit sky; a second picture
-  shows through instead.
+- **Chomp** — the media as a leaf, eaten through by the music. Two grazers walk the leaf and leave a
+  mouthful behind every so often; the damage is the union of those mouthfuls, so the margin is
+  scalloped by the overlapping arcs, the trail shows which way they went, and holes only ever grow.
+  The music sets how fast they eat, not how big the holes are. No second picture reveals a soft
+  backlit sky; a second picture shows through instead.
 - **Punch** — a paper collage: one picture with a loose grid of hand-cut circular holes punched
   through it and a second picture showing through them. **The holes are a window onto one
   continuous photograph**, not a thumbnail repeated per circle — that is what makes it read as two
@@ -745,56 +745,104 @@ screenshot disagreed with it, because by then they had. **The test was racing th
 measuring.** Waiting on `thumbQueue.length === 0` rather than on a guessed interval makes it
 deterministic, and all ten previews were correct all along.
 
-### Chomp: a union of blobs, not a thresholded coastline
+### Chomp: damage is made by something that was somewhere, and then moved
 
-Chomp treats the media as a leaf and the music as something eating through it — organic holes that
-reveal a soft backlit sky with no second picture, or the second picture with one. Built from a
-photograph of caterpillar damage: a network of a few connected, irregular bites, not confetti and
-not one smooth curtain.
+Chomp treats the media as a leaf and the music as something eating through it, revealing a soft
+backlit sky with no second picture or the second picture with one. Built from a photograph of
+caterpillar damage: a sprawling, branching, connected region with a deeply scalloped margin, leaf
+peninsulas jutting into it and islands left standing inside it.
 
-**The first version was a single low-frequency sum of sines, thresholded** — the same construction
-Ripple's ink field uses, for the same reason: an fbm sits wherever it happens to sit, and only a
-field built to average zero lets one fixed threshold mean the same coverage on every picture. It
-compiled, ran, and was wrong in kind. At any coverage worth looking at it produced one continuous
-region sliding across the frame — a curtain, not bites — because a single scalar field thresholded
-one way has no notion of "several separate things." A leaf eaten by a caterpillar is a handful of
-distinct bites that occasionally run into each other, and that needed several shapes with their own
-position and size from the start, not one field cut at a level.
+**Three generations, and the first two failed for the same underlying reason.** A single
+low-frequency sum-of-sines field, thresholded, read as one curtain sliding across the frame at any
+useful coverage — a scalar field cut at a level has no notion of "several separate things". Six
+wobbly blobs on a jittered grid, growing in place with the swell, read as spots appearing. Neither
+had the one property that makes leaf damage legible, which is that **it is made by something that
+was somewhere, and then moved**. Nothing about a field or a grid encodes a path.
 
-**The fix is a union of wobbly blobs**, which is Fields' own blob construction with one change:
-Fields picks the *nearest* blob per pixel (a hard partition, so its cutouts stay separate windows
-by design), where Chomp takes the *smooth minimum* of every blob's distance at once, so two that
-grow into each other fuse at a rounded waist instead of meeting at a seam. Six blobs on a jittered
-3x2 grid (Fields' own cell-and-jitter placement), each with an irregular angular-harmonic outline,
-its own slow breathing phase so six bites answering one passage do not rise and fall as a single
-object, and a local boost near a strike so a hit opens a bite where it landed — the same
-broad-swell-plus-localised-strike split every other reactive look here uses, because it already
-answers "how is the passage going" and "did something happen right here" as two different questions that
-want two different mechanisms.
+So the CPU walks two grazers over the leaf and deposits one disc per mouthful; the shader unions the
+discs it is handed. Three things fall out of that for free, which is why it is the right model
+rather than merely a more elaborate one:
 
-**A rim band nearly as wide as the bites made every hole look drawn in marker.** The first pass set
-the browned "dead tissue" edge to a band 0.05 units wide against blobs with a ~0.06 unit radius —
-the rim was not a rim, it was most of the shape. Both the width (to 0.016) and the mix strength (to
-0.55) came down to a fraction of that, and it reads as a thin edge now rather than an outline.
+- **The scalloped margin.** Overlapping circles meet in concave cusps, and that cusped edge *is* the
+  scallop on a chewed leaf. It is why this takes a plain `min()` and not the smooth minimum the
+  blob version used — `smin` rounds off precisely the cusps that carry the whole read, which is what
+  made those blobs look like spilled paint.
+- **Direction**, with nothing added to show it. A trail of overlapping discs points where it has been
+  going.
+- **Growth that only grows.** Discs accumulate rather than pulsing. A leaf does not un-eat, and the
+  blob version breathing with the swell was the tell.
 
-**The sky read as khaki, and the bug was the falloff coefficient, not the colours.** Isolated by
-forcing the fragment colour to each intermediate value in turn — first the function's return, then
-the gradient alone, then the glow alone — the gradient alone was correct blue at every sampled point
-(measured `76,148,219` to `152,200,236` across the frame), and the glow alone, which should fall
-away from the sun, was reading `160` to `251` out of 255 almost everywhere. `dot(d,d)` only reaches
-about 1.3 at the far corner of a unit-scale frame; a coefficient of 0.9 barely dents an exponential
-over that range, so even the corner farthest from the sun came back at glow 0.31 and the warm colour
-was washing out the whole sky rather than sitting near one point in it. The fix was the exponent
-(0.9 to 6.0), not the mix weight or the colours — a strong glow with the wrong radius still covers
-everything, just more so.
+The music sets how *fast* it eats, never how big the holes are — the honest mapping, since a loud
+passage should mean more leaf gone by the end of it and the damage should stay gone. Measured, that
+is 12% of the frame eaten after 50s of silence against 24% after 60s of music. A notable beat lunges
+one grazer forward by about a mouthful, the two taking turns, which is what makes a beat visible as a
+beat: you watch it take a chunk.
+
+#### Tuning a walk needs a simulator, not screenshots
+
+The path's shape was tuned in a standalone Node model of the walk (`scratchpad/pathlib.js`), scored
+on two measurements of the resulting bite cloud: the ratio of its principal axes, where 1 is a round
+patch and much above 2 is a ribbon, and how much of its own bounding box the bites cover. A browser
+screenshot round trip is forty seconds and a judgement call; the simulator is milliseconds and a
+number, and it renders the shape as text so the topology can be read directly.
+
+That mattered, because three plausible-sounding models each failed differently and the failures are
+only obvious once measured:
+
+- **Turning per second instead of per unit distance.** The first walk turned at up to 2.35 rad/s
+  while creeping at 0.05 frame-heights/s — a turning radius of 0.021 against a bite radius of 0.055,
+  so it pivoted tighter than its own mouth and chewed itself into a ball. Curvature per unit
+  travelled is also the physically right quantity: how sharply an animal turns is a property of the
+  animal, not of how fast it is going, and it makes the path trace the same shape loud or quiet.
+- **No home attraction at all.** Pure meander scored axis ratios in the thousands: both grazers walk
+  to the frame edge and the margin steering then runs them along it, piling damage into a band down
+  one side.
+- **Home attraction too tight.** Confining each grazer to a small patch and letting both converge ate
+  a scalloped *disc* with an island in the middle. A hole punch, not a caterpillar.
+
+What works is a home point that is a slow lag of the grazer's own position — a pursuit, not an anchor,
+so it folds back over its own track while the patch drifts — plus **mutual avoidance**, because two
+caterpillars on one leaf do not feed on top of each other. That last term is what turns one round
+hole into two lobes joined at a neck, which is the shape the reference photograph actually has. The
+chosen configuration measures 1.67 average axis ratio, never worse than 1.95, roughly half its
+bounding box filled, and is never once pinned against the frame edge.
+
+A caution about the metric: **high fill is the wrong target on its own**, because a perfect disc
+fills 78% and a chewed leaf does not look like a hole punch. The measurement was only used to escape
+"ribbon"; choosing among the shapes that passed was done by rendering them and looking.
+
+#### A ring buffer that ate its own live entries
+
+Bites live in a fixed ring of 32. During a loud passage the ring recycles in about eight seconds
+while a bite's lifetime is far longer, so slots were being reused **while the bite in them was still
+fully open**. Measured, that was 322 instantaneous disappearances over 1800 frames, the worst going
+from fully open to gone between one frame and the next — chunks of hole snapping shut, which reads as
+a rendering fault rather than as a leaf, and which no amount of looking at a still frame would have
+caught.
+
+The fix is that a bite closes for two independent reasons: its age, and **its position in the trail**.
+The oldest handful fade as newer ones are laid down, which guarantees a slot is shut before it can be
+reused whatever rate the music is driving. Two details matter. Rank is a whole number that steps a
+fifth of a second apart at speed, so the result is smoothed rather than used directly, or the tail
+shrinks in visible increments. And the fade reaches zero three deposits *before* the slot is actually
+reused — without that dead zone the smoothing was still being cut off partway down, leaving 7 pops of
+up to 0.31. With it, zero.
+
+Two earlier bugs from the same look, both found by isolating rather than adjusting. The browned rim
+band was set nearly as wide as the bites themselves (0.05 units against a ~0.06 radius) — not a rim
+but an outline, so every hole looked drawn in marker. And the sky read as khaki: forcing the fragment
+colour to each intermediate value in turn showed the gradient alone was correct blue everywhere
+(`76,148,219` to `152,200,236`) while the glow alone, which should fall away from the sun, was
+reading 160 to 251 out of 255 almost everywhere. `dot(d,d)` only reaches about 1.3 at the far corner
+of a unit-scale frame, and a coefficient of 0.9 barely dents an exponential over that range, so even
+the farthest corner came back at glow 0.31. The fix was the exponent, not the colours or the mix
+weight — **a strong glow with the wrong radius still covers everything, just more so.**
 
 Coverage answers `chompSwell`, built with the identical fast-in/slow-out/build-up shape as Fields'
-envelope (a leaky store for a passage that stays up, a quick term for the instant, a stacking term
-for a run of beats) — that shape already proved out as "answers a passage, not a beat," and there
-was no reason to invent a second one. Frame cost measured 169ms on the software rasterizer used for
-testing; given `MODE_SCALE` for the same reason as Fields, in the same 0.80 ratio, it came down to
-109ms with no visible loss — the blobs are large, soft-edged shapes, exactly what survives a lower
-internal resolution and a smoothing upscale.
+envelope, because that shape already proved out as "answers a passage, not a beat". Frame cost is
+131ms on the software rasterizer used for testing, against 156ms for Fields and 328ms for Dots;
+`MODE_SCALE` is applied at the same 0.80 ratio as Fields and for the same reason, since large
+soft-edged shapes are exactly what survives a lower internal resolution and a smoothing upscale.
 
 ### Sampler: the only thing that moves is where the colour is taken from
 

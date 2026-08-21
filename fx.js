@@ -79,6 +79,9 @@ const FX = {
       // then somewhere else, so nothing depends on which way up it is.
       uniform float uWash;        // how far the second reflection has spread
       uniform vec3  uStrike[2];   // x, y in uv; z is the amount, 0 when spent
+      // Chomp's mouthfuls, oldest first: x, y in uv, radius in frame-heights,
+      // and how open the bite is (0 = not there, or healed over).
+      uniform vec4  uBites[32];
       uniform vec3  uPal[5];
       uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
       uniform float uDropAmp[6];   // height, which is a separate question
@@ -1513,71 +1516,63 @@ const FX = {
           vec3 leaf = tex(coverUV(uv));
           float t = uTime;
 
-          /* Bites are a union of wobbly blobs, not a thresholded field —
-             the first version was a single sum-of-sines coastline, and at
-             any coverage worth seeing it read as one curtain sliding across
-             the frame rather than as several holes. A leaf eaten by a
-             caterpillar is a handful of separate bites that occasionally
-             run into each other and fuse at a narrow waist; that needs
-             distinct shapes with their own position and size, unioned by a
-             smooth minimum so two that grow into each other blend rather
-             than cut a hard seam. This is Fields' blob construction with
-             the "nearest wins" partition swapped for a true union, which is
-             the one thing Fields deliberately does not do — its shapes stay
-             separate windows on purpose, where a bite is supposed to be
-             able to spread into its neighbour. */
-          vec2 cell = vec2(aspect / 3.0, 1.0 / 2.0);
+          /* The eaten region is the union of individual mouthfuls, laid down
+             one at a time along the path a grazer actually walked. The
+             positions come from the CPU in uBites, oldest first.
+
+             Two earlier versions were wrong in ways worth recording. The
+             first thresholded a single sum-of-sines field, which at any
+             useful coverage read as one curtain sliding across the frame,
+             because a scalar field cut at a level has no notion of "several
+             separate things". The second replaced it with six blobs on a
+             grid that grew in place — which is spots appearing, not eating.
+             Neither had the one property that makes leaf damage legible:
+             it is *made by something that was somewhere, and then moved*.
+
+             So a bite is one disc, deposited where the grazer stood, and
+             damage is the union of every disc it has left behind. Three
+             things fall out of that for free, which is why it is the right
+             model rather than merely a more elaborate one:
+
+             - The scalloped margin. A row of overlapping circles meets in
+               concave cusps, and that cusped edge *is* the scallop you see
+               on a chewed leaf. It is why this takes a plain min() and not
+               the smooth minimum the previous version used — smin rounds
+               precisely the cusps that carry the whole read, which is what
+               made those blobs look like spilled paint.
+             - Direction. A trail of overlapping discs points where it has
+               been going. Nothing has to be added to show it.
+             - Growth that only ever grows. Discs accumulate; they do not
+               pulse in and out. A leaf does not un-eat, and the previous
+               version's blobs breathing with the swell was the tell. */
           float sd = 1e9;
-          for (int cy = 0; cy < 2; cy++) {
-            for (int cx = 0; cx < 3; cx++) {
-              vec2 id = vec2(float(cx), float(cy));
-              vec2 c = (id + 0.5) * cell
-                     + (vec2(hash(id + 2.1), hash(id + 5.3)) - 0.5) * cell * 0.55;
-              // Slow wander, well under the blob's own radius — leaf damage
-              // does not roam, it just sits there getting bigger.
-              c.x += sin(t * (0.020 + hash(id + 8.1) * 0.015) + hash(id) * 6.3) * cell.x * 0.12;
-              c.y += sin(t * (0.015 + hash(id + 2.7) * 0.012) + hash(id + 5.1) * 6.3) * cell.y * 0.10;
-
-              vec2 d = P - c;
-              float ang = atan(d.y, d.x);
-              float len = length(d);
-              // An irregular outline, not a circle — the same angular-
-              // harmonic technique Fields uses for its torn edges.
-              float s1 = hash(id + 1.1) * 6.28, s2 = hash(id + 2.3) * 6.28;
-              float wobble = 1.0 + sin(ang * 3.0 + s1) * 0.16 + sin(ang * 5.0 - s2) * 0.09;
-
-              // Each bite breathes on its own slow phase as well as on the
-              // shared swell, so six bites answering the same passage do not
-              // rise and fall as one object.
-              float own = 0.5 + 0.5 * sin(t * (0.028 + hash(id + 4.4) * 0.010) + hash(id + 3.3) * 6.28);
-
-              // A strike grows the nearest bite hard and briefly — the
-              // localised half of the pair, same reasoning as Fields' knear:
-              // the swell says how the passage is going, this says a hit
-              // landed right here.
-              float knear = 0.0;
-              for (int k = 0; k < 2; k++) {
-                vec2 kd = c - vec2(uStrike[k].x * aspect, uStrike[k].y);
-                knear = max(knear, exp(-dot(kd, kd) / (cell.x * cell.x * 0.6)) * uStrike[k].z);
-              }
-
-              float rad = cell.x * (0.30 + hash(id + 5.7) * 0.12) * wobble
-                        * (0.55 + uSwell * (0.20 + own * 0.55) + knear * 0.85);
-
-              float sdI = len - rad;
-              // Smooth minimum: two blobs within k of each other fuse at a
-              // rounded waist instead of meeting at a crease.
-              float k2 = cell.x * 0.32;
-              float h = clamp(0.5 + 0.5 * (sdI - sd) / k2, 0.0, 1.0);
-              sd = mix(sdI, sd, h) - k2 * h * (1.0 - h);
-            }
+          vec2  bestD = vec2(1.0, 0.0);
+          float bestR = 0.0, bestSeed = 0.0;
+          for (int i = 0; i < 32; i++) {
+            vec4 b = uBites[i];
+            if (b.w <= 0.003) continue;          // never bitten, or healed over
+            vec2 d = P - vec2(b.x * aspect, b.y);
+            float r = b.z * b.w;
+            float s = length(d) - r;
+            if (s < sd) { sd = s; bestD = d; bestR = r; bestSeed = float(i) * 1.37; }
           }
 
-          // Serration at the bite's own scale — real leaf damage has small
-          // ragged teeth along the cut, not a shivering outline, so this is
-          // one octave at a scale close to the bites themselves rather than
-          // a fine high-frequency wobble.
-          sd += (fbm(P * 6.0 + t * 0.02) - 0.5) * 0.045;
+          /* The winning bite gets an irregular rim, and only the winner —
+             the same economy Punch uses. Evaluating an atan per candidate
+             would be twenty-four of them per pixel to change an answer that
+             is already decided everywhere except along the cusps. Kept
+             modest for a related reason: where two bites are equidistant
+             the wobble switches from one seed to the other, and a large
+             wobble would show that switch as a notch. */
+          if (bestR > 0.0) {
+            float ang = atan(bestD.y, bestD.x);
+            sd -= (sin(ang * 3.0 + bestSeed * 2.1) * 0.07
+                 + sin(ang * 5.0 - bestSeed * 1.3) * 0.04) * bestR;
+          }
+
+          // Mandible serration along the cut. Small against the bite radius
+          // — this is the ragged tooth marks, not the shape of the bite.
+          sd += (fbm(P * 7.0 + t * 0.02) - 0.5) * 0.020;
 
           float aa = 2.4 / max(uRes.y, 1.0);
           float inside = 1.0 - smoothstep(-aa, aa, sd);
@@ -1637,7 +1632,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uPal','uDrops','uDropAmp','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uBites','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1807,6 +1802,8 @@ const FX = {
     gl.uniform1f(this.u.uBar, p.bar || 0);
     gl.uniform1f(this.u.uWash, p.wash || 0);
     gl.uniform3fv(this.u.uStrike, p.strikes || new Float32Array(6));
+    gl.uniform4fv(this.u.uBites, p.bites
+      || (this._noBites || (this._noBites = new Float32Array(128))));
     gl.uniform1f(this.u.uHasTex, this.hasTex);
 
     const pal = new Float32Array(15);
