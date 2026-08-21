@@ -59,12 +59,12 @@ the ordinary way, by adding new media or tapping another tile.
 every file handed to them; the OS picker dialog itself was missing the one HTML attribute
 (`multiple`) that tells it to allow more than a single selection.
 
-Ten looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
+Eleven looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
 without deleting any code. Removing that one word brings a look back.
 
 Poster, Sampler, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields,
-Ripple, Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader
+Chomp, Ripple, Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader
 (`fx.js`).
 
 **Tone** — Cyanotype's chemistry and Fields' ground both take a tone from the *Tone* chip: Blue
@@ -85,6 +85,7 @@ it: with one picture loaded they all work exactly as before.
 | Punch | layer two shows through the cut holes |
 | Dots | every dot takes its colour from layer two; the invented hues are the no-second-picture default |
 | Fields | some of the cutouts are layer two |
+| Chomp | what the bites reveal, instead of the backlit sky |
 | Ripple | ink dropped in water — absent when quiet, arriving as a droplet, spreading and dispersing with the swell |
 | Ribbed | the two ride a conveyor behind the glass, one panel per screen width, running left |
 | Lens | circles trade pictures on a music-driven shuffle, each on its own clock, crossfaded |
@@ -111,6 +112,11 @@ it: with one picture loaded they all work exactly as before.
   with drifting phases, which gives a smooth closed curve that never settles for a few instructions
   — an fbm around each rim would cost a dozen hashes per blob and this runs nine times per pixel.
   Without the flat-colour shapes the whole sheet reads as one picture behind a mask.
+- **Chomp** — the media as a leaf, eaten through by the music: a union of a handful of wobbly,
+  irregular blobs (Fields' construction, with the nearest-blob partition swapped for a smooth
+  minimum, so bites merge into each other instead of staying separate windows), each with a browned
+  rim where the tissue has gone. No second picture reveals a soft backlit sky; a second picture
+  shows through instead.
 - **Punch** — a paper collage: one picture with a loose grid of hand-cut circular holes punched
   through it and a second picture showing through them. **The holes are a window onto one
   continuous photograph**, not a thumbnail repeated per circle — that is what makes it read as two
@@ -738,6 +744,57 @@ GPU, so ten previews had not finished — and the pixel-statistics check that ra
 screenshot disagreed with it, because by then they had. **The test was racing the thing it was
 measuring.** Waiting on `thumbQueue.length === 0` rather than on a guessed interval makes it
 deterministic, and all ten previews were correct all along.
+
+### Chomp: a union of blobs, not a thresholded coastline
+
+Chomp treats the media as a leaf and the music as something eating through it — organic holes that
+reveal a soft backlit sky with no second picture, or the second picture with one. Built from a
+photograph of caterpillar damage: a network of a few connected, irregular bites, not confetti and
+not one smooth curtain.
+
+**The first version was a single low-frequency sum of sines, thresholded** — the same construction
+Ripple's ink field uses, for the same reason: an fbm sits wherever it happens to sit, and only a
+field built to average zero lets one fixed threshold mean the same coverage on every picture. It
+compiled, ran, and was wrong in kind. At any coverage worth looking at it produced one continuous
+region sliding across the frame — a curtain, not bites — because a single scalar field thresholded
+one way has no notion of "several separate things." A leaf eaten by a caterpillar is a handful of
+distinct bites that occasionally run into each other, and that needed several shapes with their own
+position and size from the start, not one field cut at a level.
+
+**The fix is a union of wobbly blobs**, which is Fields' own blob construction with one change:
+Fields picks the *nearest* blob per pixel (a hard partition, so its cutouts stay separate windows
+by design), where Chomp takes the *smooth minimum* of every blob's distance at once, so two that
+grow into each other fuse at a rounded waist instead of meeting at a seam. Six blobs on a jittered
+3x2 grid (Fields' own cell-and-jitter placement), each with an irregular angular-harmonic outline,
+its own slow breathing phase so six bites answering one passage do not rise and fall as a single
+object, and a local boost near a strike so a hit opens a bite where it landed — the same
+broad-swell-plus-localised-strike split every other reactive look here uses, because it already
+answers "how is the passage going" and "did something happen right here" as two different questions that
+want two different mechanisms.
+
+**A rim band nearly as wide as the bites made every hole look drawn in marker.** The first pass set
+the browned "dead tissue" edge to a band 0.05 units wide against blobs with a ~0.06 unit radius —
+the rim was not a rim, it was most of the shape. Both the width (to 0.016) and the mix strength (to
+0.55) came down to a fraction of that, and it reads as a thin edge now rather than an outline.
+
+**The sky read as khaki, and the bug was the falloff coefficient, not the colours.** Isolated by
+forcing the fragment colour to each intermediate value in turn — first the function's return, then
+the gradient alone, then the glow alone — the gradient alone was correct blue at every sampled point
+(measured `76,148,219` to `152,200,236` across the frame), and the glow alone, which should fall
+away from the sun, was reading `160` to `251` out of 255 almost everywhere. `dot(d,d)` only reaches
+about 1.3 at the far corner of a unit-scale frame; a coefficient of 0.9 barely dents an exponential
+over that range, so even the corner farthest from the sun came back at glow 0.31 and the warm colour
+was washing out the whole sky rather than sitting near one point in it. The fix was the exponent
+(0.9 to 6.0), not the mix weight or the colours — a strong glow with the wrong radius still covers
+everything, just more so.
+
+Coverage answers `chompSwell`, built with the identical fast-in/slow-out/build-up shape as Fields'
+envelope (a leaky store for a passage that stays up, a quick term for the instant, a stacking term
+for a run of beats) — that shape already proved out as "answers a passage, not a beat," and there
+was no reason to invent a second one. Frame cost measured 169ms on the software rasterizer used for
+testing; given `MODE_SCALE` for the same reason as Fields, in the same 0.80 ratio, it came down to
+109ms with no visible loss — the blobs are large, soft-edged shapes, exactly what survives a lower
+internal resolution and a smoothing upscale.
 
 ### Sampler: the only thing that moves is where the colour is taken from
 

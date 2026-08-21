@@ -30,9 +30,9 @@ const FX = {
   // fine detail is grain, so it does not need a look-that-resamples-sharply
   // backing store either. Punch is deliberately absent — its cut edge is a
   // hairline and softening that is the one thing that look cannot afford.
-  MODE_SCALE: { 5: 0.68, 8: 0.80 },
+  MODE_SCALE: { 5: 0.68, 8: 0.80, 9: 0.80 },
 
-  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6, Dots: 7, Fields: 8 },
+  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6, Dots: 7, Fields: 8, Chomp: 9 },
 
   init(canvasEl) {
     if (this.ok) return true;
@@ -294,6 +294,31 @@ const FX = {
       }
       vec3 texB(vec2 uv){
         return texture2D(uTexB, clamp(edgeUV(uv), 0.001, 0.999)).rgb;
+      }
+
+      // Chomp's ground when there is no second picture: what you would see
+      // if the leaf were backlit by a soft sky rather than by anything on a
+      // second image. A vertical tint plus one warm patch, off-centre the way
+      // real light through foliage is never dead centre — a symmetric glow
+      // reads as a lamp, an offset one reads as the sun.
+      vec3 sky(vec2 uv, float aspect){
+        // The first version read as khaki, not sky, and the fault was the
+        // glow, not the gradient — measured with the gradient alone the
+        // blue was correct at every sampled point. dot(d,d) only reaches
+        // about 1.3 at the far corner of a unit-scale frame, and 0.9 as a
+        // coefficient barely dents an exponential over that range: even the
+        // corner farthest from the sun came back at glow=0.31, so the warm
+        // colour was washing out the whole sky instead of sitting near one
+        // point in it. The coefficient needed to be several times larger,
+        // not the mix weight — a strong glow with the wrong radius still
+        // covers everything.
+        vec3 top = vec3(0.30, 0.58, 0.86);
+        vec3 low = vec3(0.62, 0.80, 0.93);
+        vec3 base = mix(low, top, smoothstep(0.05, 0.95, uv.y));
+        vec2 sun = vec2(0.42, 0.30) * vec2(aspect, 1.0);
+        vec2 d = uv * vec2(aspect, 1.0) - sun;
+        float glow = exp(-dot(d, d) * 6.0);
+        return mix(base, vec3(1.0, 0.88, 0.62), glow * 0.75);
       }
 
       // Choose between the two pictures. Written as a branch rather than an
@@ -1251,7 +1276,7 @@ const FX = {
         // in the artwork's own colours. The outlines morph slowly, so the
         // shapes look cut by hand and never settle.
         // ================================================================
-        else {
+        else if (uMode == 8) {
           vec3 paper = uFieldBg;
           col = paper;
 
@@ -1473,6 +1498,109 @@ const FX = {
 
           float gr = hash(floor(vUv * uRes / 1.3));
           col += (gr - 0.5) * 0.045;
+        }
+
+        // ================================================================
+        // 9 — CHOMP. The media is a leaf; the music eats through it. Where
+        // no second picture is loaded the holes are backlit by a soft sky;
+        // with one, the second picture shows through — the same "what is
+        // behind the hole" question Punch answers, asked with an organic,
+        // gnawed edge instead of a cut one.
+        // ================================================================
+        else {
+          float aspect = uRes.x / max(uRes.y, 1.0);
+          vec2 P = uv * vec2(aspect, 1.0);
+          vec3 leaf = tex(coverUV(uv));
+          float t = uTime;
+
+          /* Bites are a union of wobbly blobs, not a thresholded field —
+             the first version was a single sum-of-sines coastline, and at
+             any coverage worth seeing it read as one curtain sliding across
+             the frame rather than as several holes. A leaf eaten by a
+             caterpillar is a handful of separate bites that occasionally
+             run into each other and fuse at a narrow waist; that needs
+             distinct shapes with their own position and size, unioned by a
+             smooth minimum so two that grow into each other blend rather
+             than cut a hard seam. This is Fields' blob construction with
+             the "nearest wins" partition swapped for a true union, which is
+             the one thing Fields deliberately does not do — its shapes stay
+             separate windows on purpose, where a bite is supposed to be
+             able to spread into its neighbour. */
+          vec2 cell = vec2(aspect / 3.0, 1.0 / 2.0);
+          float sd = 1e9;
+          for (int cy = 0; cy < 2; cy++) {
+            for (int cx = 0; cx < 3; cx++) {
+              vec2 id = vec2(float(cx), float(cy));
+              vec2 c = (id + 0.5) * cell
+                     + (vec2(hash(id + 2.1), hash(id + 5.3)) - 0.5) * cell * 0.55;
+              // Slow wander, well under the blob's own radius — leaf damage
+              // does not roam, it just sits there getting bigger.
+              c.x += sin(t * (0.020 + hash(id + 8.1) * 0.015) + hash(id) * 6.3) * cell.x * 0.12;
+              c.y += sin(t * (0.015 + hash(id + 2.7) * 0.012) + hash(id + 5.1) * 6.3) * cell.y * 0.10;
+
+              vec2 d = P - c;
+              float ang = atan(d.y, d.x);
+              float len = length(d);
+              // An irregular outline, not a circle — the same angular-
+              // harmonic technique Fields uses for its torn edges.
+              float s1 = hash(id + 1.1) * 6.28, s2 = hash(id + 2.3) * 6.28;
+              float wobble = 1.0 + sin(ang * 3.0 + s1) * 0.16 + sin(ang * 5.0 - s2) * 0.09;
+
+              // Each bite breathes on its own slow phase as well as on the
+              // shared swell, so six bites answering the same passage do not
+              // rise and fall as one object.
+              float own = 0.5 + 0.5 * sin(t * (0.028 + hash(id + 4.4) * 0.010) + hash(id + 3.3) * 6.28);
+
+              // A strike grows the nearest bite hard and briefly — the
+              // localised half of the pair, same reasoning as Fields' knear:
+              // the swell says how the passage is going, this says a hit
+              // landed right here.
+              float knear = 0.0;
+              for (int k = 0; k < 2; k++) {
+                vec2 kd = c - vec2(uStrike[k].x * aspect, uStrike[k].y);
+                knear = max(knear, exp(-dot(kd, kd) / (cell.x * cell.x * 0.6)) * uStrike[k].z);
+              }
+
+              float rad = cell.x * (0.30 + hash(id + 5.7) * 0.12) * wobble
+                        * (0.55 + uSwell * (0.20 + own * 0.55) + knear * 0.85);
+
+              float sdI = len - rad;
+              // Smooth minimum: two blobs within k of each other fuse at a
+              // rounded waist instead of meeting at a crease.
+              float k2 = cell.x * 0.32;
+              float h = clamp(0.5 + 0.5 * (sdI - sd) / k2, 0.0, 1.0);
+              sd = mix(sdI, sd, h) - k2 * h * (1.0 - h);
+            }
+          }
+
+          // Serration at the bite's own scale — real leaf damage has small
+          // ragged teeth along the cut, not a shivering outline, so this is
+          // one octave at a scale close to the bites themselves rather than
+          // a fine high-frequency wobble.
+          sd += (fbm(P * 6.0 + t * 0.02) - 0.5) * 0.045;
+
+          float aa = 2.4 / max(uRes.y, 1.0);
+          float inside = 1.0 - smoothstep(-aa, aa, sd);
+
+          /* A browned rim, on the leaf side of the cut only — the thin dead
+             tissue every real bite leaves behind before the hole opens.
+             The first pass used a band nearly as wide as the bites
+             themselves (0.05 against a ~0.06 radius), which is not a rim,
+             it is an outline — every hole read as if it had been drawn with
+             a marker. Both the width and the strength are a fraction of
+             that now. */
+          float band = 0.016;
+          float rim = (1.0 - inside) * (1.0 - smoothstep(0.0, band, sd));
+          vec3 leafCol = leaf * mix(vec3(1.0), vec3(0.42, 0.27, 0.13), rim * 0.55);
+
+          // What is behind the leaf drifts a little, the way Punch's inner
+          // picture does — alive without the cut edge ever looking like it
+          // moved.
+          vec2 par = vec2(sin(uTime * 0.037) * 0.020, cos(uTime * 0.029) * 0.016)
+                   * (0.6 + uLevel * 0.8);
+          vec3 innerCol = uHasTexB > 0.5 ? texB(coverUVB(uv + par)) : sky(uv, aspect);
+
+          col = mix(leafCol, innerCol, inside);
         }
 
         col = clamp(col, 0.0, 1.0);

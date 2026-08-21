@@ -216,7 +216,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v78 &middot; 19 Aug 2026</p>
+  <p class="ver" id="ver">v79 &middot; 21 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -755,6 +755,7 @@ const LOOKS = [
   { name:'Punch',  fx:'Punch'  },
   { name:'Dots',   fx:'Dots'   },
   { name:'Fields', fx:'Fields' },
+  { name:'Chomp',  fx:'Chomp'  },
   { name:'Ripple', fx:'Ripple' },
   { name:'Ribbed', fx:'Ribbed' },
   { name:'Marble', fx:'Marble', hidden:true },
@@ -1235,7 +1236,7 @@ function drawFX(cfg) {
   FX.render({
     // One look renders at a time, so uSwell carries whatever that look's own
     // envelope is. Fields wants a far slower one than the water does.
-    time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : is('Dots') ? dotsSwell : rippleSwell,
+    time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : is('Chomp') ? chompSwell : is('Dots') ? dotsSwell : rippleSwell,
     strikes: strikeBuf, wash: rippleWash,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
@@ -1626,6 +1627,7 @@ let rippleHold = 0, rippleImm = 0, rippleSlow = 0, rippleWash = 0, washTarget = 
 // watchable is mostly a matter of time: nothing here should arrive faster
 // than a cloud changing shape.
 let fieldHold = 0, fieldImm = 0, fieldSwell = 0, fieldBuild = 0;
+let chompHold = 0, chompImm = 0, chompSwell = 0, chompBuild = 0;
 // Fields' strike: where the last strong moment landed, how far through
 // its envelope it is, and how hard it hit.
 const strikeX = [0.30, 0.72], strikeY = [0.70, 0.28];
@@ -2000,6 +2002,22 @@ function frame(now) {
     fieldBuild + dt * (A.beat * 1.00 * (1 - fieldBuild) - fieldBuild * 0.21)));
 
   fieldSwell = Math.min(1, fieldImm * 0.28 + fieldHold * 0.62 + fieldBuild * 0.26);
+
+  /* Chomp's coverage. The same three-term shape as Fields' — a leaky store
+     for a passage that stays up, a quick-in/slow-out term for the instant,
+     and a build that stacks a run of beats — because that shape is what
+     "answers a passage, not a beat" actually looks like, and Fields already
+     proved it. The threshold mapping in the shader keeps the maximum well
+     short of "leaf gone", so this only ever has to say how much is eaten
+     right now, never when to stop. */
+  const cFeed = Math.max(0, drive - 0.22);
+  chompHold = Math.min(1, Math.max(0,
+    chompHold + dt * (cFeed * 0.45 * (1 - chompHold) - chompHold * 0.085)));
+  chompImm += (drive - chompImm) *
+              (1 - Math.exp(-dt / (drive > chompImm ? 0.55 : 9.0)));
+  chompBuild = Math.min(1, Math.max(0,
+    chompBuild + dt * (A.beat * 1.00 * (1 - chompBuild) - chompBuild * 0.21)));
+  chompSwell = Math.min(1, chompImm * 0.28 + chompHold * 0.62 + chompBuild * 0.26);
 
   /* And a strike: the beat you actually hear, answered in one place.
 
