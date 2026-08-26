@@ -216,7 +216,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v80 &middot; 21 Aug 2026</p>
+  <p class="ver" id="ver">v81 &middot; 21 Aug 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -1237,7 +1237,7 @@ function drawFX(cfg) {
     // One look renders at a time, so uSwell carries whatever that look's own
     // envelope is. Fields wants a far slower one than the water does.
     time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : is('Chomp') ? chompSwell : is('Dots') ? dotsSwell : rippleSwell,
-    strikes: strikeBuf, wash: rippleWash, bites: chompBuf,
+    strikes: strikeBuf, wash: rippleWash, chompFlip,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lensShuffle, focus: blurFocus, tone: toneOf(),
@@ -1632,103 +1632,137 @@ let chompHold = 0, chompImm = 0, chompSwell = 0, chompBuild = 0;
 /* =====================================================================
    CHOMP'S GRAZERS
 
-   Two of them, each walking over the leaf and leaving a mouthful behind
-   every so often. The shader unions the mouthfuls; everything about
-   *where* they are lives here, because a path is a thing with memory and
-   a fragment shader has none — each pixel would have to re-derive the
-   whole walk from scratch.
+   Two of them, walking over the leaf and leaving a mouthful behind every so
+   often. Everything about where they are lives here, because a path is a
+   thing with memory and a fragment shader has none.
+
+   The damage is permanent. That single requirement is what decides the
+   whole architecture: every earlier version healed at the tail, and that
+   was never a stylistic choice — it was a ring of thirty-two mouthfuls in
+   uniforms showing its edge, because a fixed array cannot hold an
+   unbounded history. So the accumulated damage lives in an offscreen
+   canvas that is stamped into and never cleared, and goes to the shader as
+   a texture. One texture holds any amount of history.
 
    What the model gets right, in the order it matters:
 
-   - Damage accumulates rather than pulsing. Each bite is deposited once
-     and then only ever heals, slowly, from the oldest end. The previous
-     version grew and shrank blobs with the music, which is the single
-     most obvious tell that nothing is actually eating anything.
-   - The music sets how *fast* it eats, not how big the holes are. That is
-     the honest mapping: a loud passage means more leaf gone by the end of
-     it, and the damage stays gone afterwards.
-   - Turning is nobody's business but the caterpillar's. The heading
-     wanders on its own slow clock at a fixed rate whatever the music is
-     doing — a bug does not steer faster because the room got loud, it
-     just gets through more leaf. Two incommensurate sines, so the path
-     wanders instead of circling.
-   - A notable beat lunges one grazer forward by about a bite. That is
-     what makes the beat visible: you watch it take a chunk.
+   - Eaten is eaten. Nothing grows back, nothing fades, and the edge of a
+     bite is fixed at the moment it is taken.
+   - The music sets how *fast* it eats, never how big the holes are. A loud
+     passage means more leaf gone by the end of it, and it stays gone.
+   - Grazers go where the leaf still is. Steering toward uneaten leaf is
+     what a caterpillar does, and it also makes the two of them separate
+     without needing a rule about avoiding each other — each is repelled by
+     the other's damage for free, because damage is what it avoids.
+   - A notable beat lunges one grazer forward by about a mouthful. That is
+     what makes a beat visible: you watch it take a chunk.
    ===================================================================== */
-// Ring of mouthfuls. Must match the uBites array length and loop bound in
-// fx.js — GLSL ES 1.0 needs a literal there, so the two are coupled by hand.
-// 32 costs 32 uniform vector slots on top of the 53 the shader already uses;
-// phones report 128 at the low end, so there is room but not unlimited room.
-const CHOMP_MAX = 32;
-const chompBuf = new Float32Array(CHOMP_MAX * 4);   // x, y (uv), radius, amount
-const chompLife = new Float32Array(CHOMP_MAX);      // 1 fresh, 0 healed over
-const chompAge = new Float32Array(CHOMP_MAX);
-let chompNext = 0, chompBeatSlot = 0, lastChompBeat = -9;
-// Long enough that a loud passage fills the ring before anything dies of
-// age, and a quiet one leaves only a few bites showing. That difference is
-// the whole music response, and it is a difference in *how much leaf is
-// gone*, which is the thing that should answer the music.
-const CHOMP_LIFE = 26;
-// Three quarters of a bite, so consecutive mouthfuls overlap enough to
-// connect but still leave the cusp between them. Spacing near the radius is
-// what makes a scalloped margin; spacing far below it makes a smooth tube.
-const CHOMP_STEP = 0.045;
-// Two, starting near each other and heading apart — which is what the
-// reference photograph shows: one connected patch of damage with a
-// caterpillar working at either end of it, not two unrelated holes.
+const CHOMP_MASK_N = 512;              // mask resolution, square, in uv space
+const CHOMP_STEP = 0.045;              // travel between mouthfuls, frame-heights
+const CHOMP_GRID = 44;                 // occupancy grid rows, for coverage and seeking
+let chompMask = null, chompMaskCtx = null;
+let chompGrid = null, chompGridW = 0, chompGridH = 0, chompGridHit = 0;
+let chompMaskDirty = true, chompFlip = 0, chompCover = 0;
+let chompBeatSlot = 0, lastChompBeat = -9, chompSeed = 0;
+
 const GRAZERS = [
-  { x: 0.40, y: 0.44, h: 0.9, travel: 0, seed: 0.0, hx: 0.40, hy: 0.44 },
-  { x: 0.58, y: 0.54, h: 3.9, travel: 0, seed: 2.7, hx: 0.58, hy: 0.54 }
+  { x: 0.40, y: 0.44, h: 0.9, travel: 0, seed: 0.0 },
+  { x: 0.58, y: 0.54, h: 3.9, travel: 0, seed: 2.7 }
 ];
-/* How far a grazer strays from its own home point before it is steered
-   back. This is what makes damage sprawl instead of trail: a caterpillar
-   feeds from the margin of the hole it has already made, so it keeps
-   folding back over its own track and widening the patch rather than
-   walking off across the leaf. Without it both grazers simply left, and the
-   result was one uniform-width ribbon that read as a drawn line.
 
-   The numbers here (and the gain and home lag below) were not guessed. The
-   walk was lifted out into a standalone simulation — scratchpad/pathlib.js
-   — and 240 combinations scored on two measurements of the resulting bite
-   cloud: the ratio of its principal axes, where 1 is a round patch and
-   anything above about 2 is a ribbon, and how much of its own bounding box
-   the bites cover. The first version measured 2.81 average and 5.07 at
-   worst, which is the ribbon that was visible on screen. This one holds
-   1.39 in portrait and 2.10 at its worst on a desktop frame, fills around
-   60%, and never once ends up pinned against the frame edge.
-
-   A caution on that, though: high fill on its own is the wrong target,
-   because a perfect disc fills 78% and a chewed leaf does not look like a
-   hole punch. The metric was only used to get out of "ribbon"; the choice
-   between the shapes that passed was made by rendering them. */
-const CHOMP_ROAM = 0.17;
-// How close the two will feed to one another before steering apart.
-const CHOMP_APART = 0.30;
-
-function chompBite(g) {
-  const i = chompNext;
-  chompNext = (chompNext + 1) % CHOMP_MAX;
-  chompLife[i] = 1; chompAge[i] = 0;
-  // Rolled once, when the bite is taken — never per frame, or every rim
-  // would crawl.
-  chompBuf[i * 4] = g.x;
-  chompBuf[i * 4 + 1] = g.y;
-  chompBuf[i * 4 + 2] = 0.048 + Math.random() * 0.026;
-  chompBuf[i * 4 + 3] = 0;
+function chompReset(ar) {
+  if (!chompMask) {
+    chompMask = document.createElement('canvas');
+    chompMask.width = chompMask.height = CHOMP_MASK_N;
+    // No alpha: the mask is read as two colour channels, and an opaque
+    // canvas makes 'lighter' behave as a plain union of them.
+    chompMaskCtx = chompMask.getContext('2d', { alpha: false });
+  }
+  chompMaskCtx.globalCompositeOperation = 'source-over';
+  chompMaskCtx.fillStyle = '#000';
+  chompMaskCtx.fillRect(0, 0, CHOMP_MASK_N, CHOMP_MASK_N);
+  chompGridH = CHOMP_GRID;
+  chompGridW = Math.max(4, Math.round(CHOMP_GRID * ar));
+  chompGrid = new Uint8Array(chompGridW * chompGridH);
+  chompGridHit = 0;
+  chompCover = 0;
+  chompMaskDirty = true;
 }
 
-/* Walk `dist` (in frame-heights) along the current heading, turning as it
-   goes and dropping a bite each time a bite-spacing has been covered.
+// Has this spot been eaten? Averaged over a couple of cells so the steering
+// below reads a gradient rather than a step.
+function chompEatenAt(ux, uy) {
+  if (!chompGrid) return 0;
+  const gx = Math.min(chompGridW - 1, Math.max(0, Math.floor(ux * chompGridW)));
+  const gy = Math.min(chompGridH - 1, Math.max(0, Math.floor(uy * chompGridH)));
+  let n = 0, hit = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    const y = gy + dy; if (y < 0 || y >= chompGridH) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      const x = gx + dx; if (x < 0 || x >= chompGridW) continue;
+      hit += chompGrid[y * chompGridW + x]; n++;
+    }
+  }
+  return n ? hit / n : 0;
+}
 
-   Turning is per unit *distance*, not per unit time, and that distinction
-   is the whole difference between a path and a scribble. Written per
-   second, the first version turned at up to 2.35 rad/s while creeping
-   along at 0.05 frame-heights/s — a turning radius of 0.021 against a bite
-   radius of 0.055, so it was pivoting tighter than its own mouth and
-   chewed itself into a ball. Curvature per unit travelled is also the
-   physically right quantity: how sharply an animal turns is a property of
-   the animal, not of how fast it happens to be going, and it means the
-   path traces the same shape whether the passage is loud or quiet. */
+/* Stamp one mouthful, permanently.
+
+   Red is the bite; green is the same bite grown slightly. Both are drawn
+   with 'lighter', so each channel accumulates as a union of everything ever
+   bitten, and the shader reads the difference between them as the browned
+   rim — a band that always hugs the outside of the current cut, however
+   many bites have merged into it.
+
+   The outline is a wobbly polygon rather than a circle, and the wobble is
+   rolled from a counter that only advances when a bite is taken. That is
+   the whole reason the edge does not crawl: it is decided once, drawn once,
+   and never recomputed. */
+function chompStamp(g, ar) {
+  if (!chompMaskCtx) return;
+  const r = 0.048 + Math.random() * 0.026;          // frame-heights
+  const rx = (r / ar) * CHOMP_MASK_N, ry = r * CHOMP_MASK_N;
+  const cx = g.x * CHOMP_MASK_N;
+  // The texture upload flips y, so the canvas holds the frame upside down.
+  const cy = (1 - g.y) * CHOMP_MASK_N;
+  const s1 = chompSeed * 1.7, s2 = chompSeed * 3.1, s3 = chompSeed * 5.3;
+  chompSeed += 1;
+
+  const path = (grow) => {
+    chompMaskCtx.beginPath();
+    for (let k = 0; k <= 40; k++) {
+      const a = k / 40 * Math.PI * 2;
+      // Three harmonics: the shape of the bite, then the mandible marks.
+      const w = 1 + Math.sin(a * 3 + s1) * 0.11
+                  + Math.sin(a * 5 - s2) * 0.06
+                  + Math.sin(a * 9 + s3) * 0.035;
+      const q = w * grow;
+      const X = cx + Math.cos(a) * rx * q, Y = cy + Math.sin(a) * ry * q;
+      if (k === 0) chompMaskCtx.moveTo(X, Y); else chompMaskCtx.lineTo(X, Y);
+    }
+    chompMaskCtx.closePath();
+    chompMaskCtx.fill();
+  };
+
+  chompMaskCtx.globalCompositeOperation = 'lighter';
+  chompMaskCtx.fillStyle = '#00ff00';  path(1.16);   // rim zone
+  chompMaskCtx.fillStyle = '#ff0000';  path(1.00);   // the bite itself
+  chompMaskDirty = true;
+
+  // Occupancy, for coverage and for steering toward leaf that is still there.
+  const gx0 = Math.floor((g.x - r / ar) * chompGridW), gx1 = Math.ceil((g.x + r / ar) * chompGridW);
+  const gy0 = Math.floor((g.y - r) * chompGridH),      gy1 = Math.ceil((g.y + r) * chompGridH);
+  for (let y = Math.max(0, gy0); y < Math.min(chompGridH, gy1); y++) {
+    for (let x = Math.max(0, gx0); x < Math.min(chompGridW, gx1); x++) {
+      const i = y * chompGridW + x;
+      if (chompGrid[i]) continue;
+      const dx = ((x + 0.5) / chompGridW - g.x) * ar, dy = (y + 0.5) / chompGridH - g.y;
+      if (dx * dx + dy * dy <= r * r) { chompGrid[i] = 1; chompGridHit++; }
+    }
+  }
+  chompCover = chompGridHit / (chompGridW * chompGridH);
+}
+
 // Steer toward `want`, by a fraction of the way, shortest way round.
 function chompTurn(g, want, k) {
   let dh = want - g.h;
@@ -1737,101 +1771,74 @@ function chompTurn(g, want, k) {
   g.h += dh * Math.min(1, k);
 }
 
-function chompAdvance(g, other, dist, ar) {
-  // About two and a half radians over a frame-height of travel, which is a
-  // long lazy S across the length of one trail rather than a coil.
+function chompAdvance(g, dist, ar) {
+  /* Turning is per unit *distance*, not per unit time, and that distinction
+     is the whole difference between a path and a scribble. Written per
+     second, an early version turned at up to 2.35 rad/s while creeping
+     along at 0.05 frame-heights/s — a turning radius of 0.021 against a
+     bite radius of 0.055, so it pivoted tighter than its own mouth and
+     chewed itself into a ball. It is also the physically right quantity:
+     how sharply an animal turns is a property of the animal, not of how
+     fast it happens to be going. */
   g.h += (1.6 * Math.sin(time * 0.13 + g.seed)
         + 0.9 * Math.sin(time * 0.071 + g.seed * 2.1)) * dist;
 
-  // Turn back at the margin rather than stopping at it — a grazer pinned
-  // against the edge eats a straight line along it, which reads as a wipe.
-  // Also per distance, or a stationary grazer would spin in place.
-  const m = 0.16;
-  const outX = Math.max(0, m - g.x) - Math.max(0, g.x - (1 - m));
-  const outY = Math.max(0, m - g.y) - Math.max(0, g.y - (1 - m));
-  if (outX !== 0 || outY !== 0) chompTurn(g, Math.atan2(outY, outX * ar), dist * 14);
+  /* Go where the leaf still is. Eight candidate headings within about a
+     right angle either side, scored by how much leaf is left a short way
+     along each, with a small bonus for carrying straight on so it commits
+     to a direction instead of dithering.
 
-  /* Stay near the patch it is already working on. The home point is a slow
-     lag of the grazer's own position, so this is a pursuit rather than an
-     anchor: the grazer circles and folds back over its own track, and the
-     patch itself drifts across the leaf over a much longer timescale. */
-  const hdx = (g.hx - g.x) * ar, hdy = g.hy - g.y;
-  const away = Math.hypot(hdx, hdy);
-  if (away > CHOMP_ROAM) {
-    chompTurn(g, Math.atan2(hdy, hdx), dist * 4 * (away - CHOMP_ROAM) / CHOMP_ROAM);
+     This replaces both the home attraction and the mutual avoidance the
+     healing version needed. Once damage is permanent, "somewhere I have not
+     eaten" is a real thing to steer by, and it does both jobs at once: it
+     keeps a grazer off its own track, and it keeps the two of them apart,
+     because each is repelled by the other's damage for exactly the same
+     reason it is repelled by its own. */
+  let bestScore = -1e9, bestAng = g.h;
+  for (let k = 0; k < 8; k++) {
+    const a = g.h + (k - 3.5) * 0.42;
+    const lx = g.x + Math.cos(a) * 0.13 / ar, ly = g.y + Math.sin(a) * 0.13;
+    // Off the leaf is worse than eaten leaf: it must turn back, not leave.
+    const off = (lx < 0.06 || lx > 0.94 || ly < 0.06 || ly > 0.94);
+    const score = (off ? -1.5 : 1 - chompEatenAt(lx, ly)) - Math.abs(k - 3.5) * 0.03;
+    if (score > bestScore) { bestScore = score; bestAng = a; }
   }
-
-  /* And keep out of the other one's way. Two caterpillars on a leaf do not
-     feed on top of each other, and this is the term that turns one round
-     hole into two lobes joined at a neck — which is the shape the reference
-     photograph actually has. Without it both grazers converged on the same
-     patch and ate it out into a scalloped disc. */
-  if (other) {
-    const ox = (g.x - other.x) * ar, oy = g.y - other.y;
-    const near = Math.hypot(ox, oy);
-    if (near > 1e-6 && near < CHOMP_APART) {
-      chompTurn(g, Math.atan2(oy, ox), dist * 3 * (CHOMP_APART - near) / CHOMP_APART);
-    }
-  }
+  chompTurn(g, bestAng, dist * 9);
 
   g.x += Math.cos(g.h) * dist / ar;   // heading is in square units, x is not
   g.y += Math.sin(g.h) * dist;
-  g.x = Math.min(0.95, Math.max(0.05, g.x));
-  g.y = Math.min(0.95, Math.max(0.05, g.y));
-  g.hx += (g.x - g.hx) * Math.min(1, dist * 0.30);
-  g.hy += (g.y - g.hy) * Math.min(1, dist * 0.30);
+  g.x = Math.min(0.96, Math.max(0.04, g.x));
+  g.y = Math.min(0.96, Math.max(0.04, g.y));
   g.travel += dist;
   for (let n = 0; n < 4 && g.travel >= CHOMP_STEP; n++) {
     g.travel -= CHOMP_STEP;
-    chompBite(g);
+    chompStamp(g, ar);
   }
 }
 
 function stepChomp(dt) {
   const ar = Math.max(0.2, W / Math.max(1, H));
+  if (!chompGrid || Math.abs(chompGridW / chompGridH - ar) > 0.12) chompReset(ar);
 
-  /* How open each bite is, and this needs two independent reasons to close,
-     not one.
+  /* When the top layer is gone, the two pictures trade places and the mask
+     starts again. The swap is invisible by construction rather than by
+     crossfading: a fully eaten top layer already shows nothing but the layer
+     behind it, so the frame a moment before the swap and a moment after are
+     the same image. What was showing through the holes becomes the thing
+     being eaten, and what was being eaten is now underneath.
 
-     Age alone is not enough, and getting that wrong is a bug worth
-     recording: the ring recycles in about eight seconds during a loud
-     passage while a bite lives for far longer, so slots were being reused
-     while the bite in them was still fully open. Measured, that was 322
-     instantaneous disappearances over 1800 frames, the worst going from
-     fully open to gone between one frame and the next — chunks of hole
-     snapping shut, which is exactly the kind of thing that looks like a
-     rendering fault rather than a leaf.
-
-     So a bite also closes by its position in the trail. The oldest handful
-     fade out as newer ones are laid down, which guarantees a slot is shut
-     before it can be reused, whatever rate the music is driving. Rank is a
-     whole number and steps a fifth of a second apart at speed, so the
-     result is smoothed rather than used directly — otherwise the tail
-     shrinks in visible increments. */
-  const TAIL = 8;
-  for (let i = 0; i < CHOMP_MAX; i++) {
-    if (chompLife[i] <= 0) { chompBuf[i * 4 + 3] = 0; continue; }
-    chompAge[i] += dt;
-    chompLife[i] = Math.max(0, chompLife[i] - dt / CHOMP_LIFE);
-    // 0 is the bite just taken; CHOMP_MAX - 1 is the one about to be
-    // overwritten.
-    const rank = (chompNext - 1 - i + CHOMP_MAX) % CHOMP_MAX;
-    // Zero three deposits before the slot is actually reused, so the
-    // smoothing has time to settle to nothing rather than being cut off
-    // partway down — which was the last of the visible pops.
-    const byRank = Math.min(1, Math.max(0, (CHOMP_MAX - 3 - rank) / (TAIL - 1)));
-    const byAge = Math.min(1, chompLife[i] / 0.14);
-    const want = Math.min(byRank, byAge);
-    const a = chompBuf[i * 4 + 3];
-    chompBuf[i * 4 + 3] = a + (want - a) * (1 - Math.exp(-dt / 0.28));
+     Not quite 100%, because the last few percent are corners the grazers
+     may take a very long time to reach, and waiting for them would stall
+     the look on a blank frame. */
+  if (chompCover >= 0.97) {
+    chompFlip = 1 - chompFlip;
+    chompReset(ar);
   }
 
   // Never quite stops: a slow baseline munch under everything, so the leaf
-  // is still changing in silence.
+  // is still being eaten in silence, just slowly.
   const spd = (0.012 + chompSwell * 0.085) * dt;
-  for (let i = 0; i < GRAZERS.length; i++) {
-    chompAdvance(GRAZERS[i], GRAZERS[1 - i], spd, ar);
-  }
+  for (const g of GRAZERS) chompAdvance(g, spd, ar);
 
   // A notable beat lunges one grazer forward by about a mouthful, the two
   // taking turns. This is what makes the beat visible as a beat: you watch
@@ -1840,9 +1847,10 @@ function stepChomp(dt) {
     lastChompBeat = time;
     const k = chompBeatSlot;
     chompBeatSlot = (chompBeatSlot + 1) % GRAZERS.length;
-    chompAdvance(GRAZERS[k], GRAZERS[1 - k],
-                 CHOMP_STEP * (0.55 + musicDrive * 0.8), ar);
+    chompAdvance(GRAZERS[k], CHOMP_STEP * (0.55 + musicDrive * 0.8), ar);
   }
+
+  if (chompMaskDirty) { FX.setMask(chompMask); chompMaskDirty = false; }
 }
 // Fields' strike: where the last strong moment landed, how far through
 // its envelope it is, and how hard it hit.

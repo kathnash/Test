@@ -79,9 +79,16 @@ const FX = {
       // then somewhere else, so nothing depends on which way up it is.
       uniform float uWash;        // how far the second reflection has spread
       uniform vec3  uStrike[2];   // x, y in uv; z is the amount, 0 when spent
-      // Chomp's mouthfuls, oldest first: x, y in uv, radius in frame-heights,
-      // and how open the bite is (0 = not there, or healed over).
-      uniform vec4  uBites[32];
+      /* Chomp's accumulated damage, drawn on the CPU and uploaded as a
+         texture rather than passed as a list of bites. Damage is permanent,
+         so there is no bounded set of "current" mouthfuls to send — the
+         whole history is the state, and a texture is the only thing that
+         holds an unbounded history for a fixed cost.
+         red = eaten, green = eaten or within the browned rim. */
+      uniform sampler2D uMask;
+      // 0 = the first picture is the leaf; 1 = they have swapped, and what
+      // was showing through the holes is now the thing being eaten.
+      uniform float uChompFlip;
       uniform vec3  uPal[5];
       uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
       uniform float uDropAmp[6];   // height, which is a separate question
@@ -1512,90 +1519,49 @@ const FX = {
         // ================================================================
         else {
           float aspect = uRes.x / max(uRes.y, 1.0);
-          vec2 P = uv * vec2(aspect, 1.0);
-          vec3 leaf = tex(coverUV(uv));
-          float t = uTime;
 
-          /* The eaten region is the union of individual mouthfuls, laid down
-             one at a time along the path a grazer actually walked. The
-             positions come from the CPU in uBites, oldest first.
+          /* The damage is a texture now, not a list of bites, and that is
+             forced by one requirement: what has been eaten stays eaten.
 
-             Two earlier versions were wrong in ways worth recording. The
-             first thresholded a single sum-of-sines field, which at any
-             useful coverage read as one curtain sliding across the frame,
-             because a scalar field cut at a level has no notion of "several
-             separate things". The second replaced it with six blobs on a
-             grid that grew in place — which is spots appearing, not eating.
-             Neither had the one property that makes leaf damage legible:
-             it is *made by something that was somewhere, and then moved*.
+             Every earlier version healed, because every earlier version held
+             the damage in a fixed set of uniforms — thirty-two mouthfuls,
+             oldest recycled — and a ring buffer cannot represent an
+             unbounded history. The fade at the tail was not a stylistic
+             choice, it was the ring's edge showing. Nothing tuned in the
+             shader could have fixed it.
 
-             So a bite is one disc, deposited where the grazer stood, and
-             damage is the union of every disc it has left behind. Three
-             things fall out of that for free, which is why it is the right
-             model rather than merely a more elaborate one:
+             So the CPU keeps the accumulated damage in an offscreen canvas
+             and stamps each new mouthful into it, never clearing. The whole
+             history costs one texture whatever the length of it, the union
+             of overlapping bites still gives the scalloped cusps, and the
+             per-bite wobble and mandible serration are baked in at the
+             moment the bite is taken — which is also the right place for
+             them, since a bitten edge does not change afterwards. */
+          vec2 m = texture2D(uMask, uv).rg;
+          // The mask arrives antialiased from the canvas, so this only
+          // firms up the transition rather than creating it.
+          float inside = smoothstep(0.30, 0.70, m.r);
+          // The green channel is the same union grown slightly, so the
+          // difference is a band that hugs the outside of every cut — the
+          // thin browned tissue a real bite leaves behind. It is a colour on
+          // the leaf, not a fade of the hole.
+          float rim = clamp(m.g - m.r, 0.0, 1.0);
 
-             - The scalloped margin. A row of overlapping circles meets in
-               concave cusps, and that cusped edge *is* the scallop you see
-               on a chewed leaf. It is why this takes a plain min() and not
-               the smooth minimum the previous version used — smin rounds
-               precisely the cusps that carry the whole read, which is what
-               made those blobs look like spilled paint.
-             - Direction. A trail of overlapping discs points where it has
-               been going. Nothing has to be added to show it.
-             - Growth that only ever grows. Discs accumulate; they do not
-               pulse in and out. A leaf does not un-eat, and the previous
-               version's blobs breathing with the swell was the tell. */
-          float sd = 1e9;
-          vec2  bestD = vec2(1.0, 0.0);
-          float bestR = 0.0, bestSeed = 0.0;
-          for (int i = 0; i < 32; i++) {
-            vec4 b = uBites[i];
-            if (b.w <= 0.003) continue;          // never bitten, or healed over
-            vec2 d = P - vec2(b.x * aspect, b.y);
-            float r = b.z * b.w;
-            float s = length(d) - r;
-            if (s < sd) { sd = s; bestD = d; bestR = r; bestSeed = float(i) * 1.37; }
-          }
-
-          /* The winning bite gets an irregular rim, and only the winner —
-             the same economy Punch uses. Evaluating an atan per candidate
-             would be twenty-four of them per pixel to change an answer that
-             is already decided everywhere except along the cusps. Kept
-             modest for a related reason: where two bites are equidistant
-             the wobble switches from one seed to the other, and a large
-             wobble would show that switch as a notch. */
-          if (bestR > 0.0) {
-            float ang = atan(bestD.y, bestD.x);
-            sd -= (sin(ang * 3.0 + bestSeed * 2.1) * 0.07
-                 + sin(ang * 5.0 - bestSeed * 1.3) * 0.04) * bestR;
-          }
-
-          // Mandible serration along the cut. Small against the bite radius
-          // — this is the ragged tooth marks, not the shape of the bite.
-          sd += (fbm(P * 7.0 + t * 0.02) - 0.5) * 0.020;
-
-          float aa = 2.4 / max(uRes.y, 1.0);
-          float inside = 1.0 - smoothstep(-aa, aa, sd);
-
-          /* A browned rim, on the leaf side of the cut only — the thin dead
-             tissue every real bite leaves behind before the hole opens.
-             The first pass used a band nearly as wide as the bites
-             themselves (0.05 against a ~0.06 radius), which is not a rim,
-             it is an outline — every hole read as if it had been drawn with
-             a marker. Both the width and the strength are a fraction of
-             that now. */
-          float band = 0.016;
-          float rim = (1.0 - inside) * (1.0 - smoothstep(0.0, band, sd));
-          vec3 leafCol = leaf * mix(vec3(1.0), vec3(0.42, 0.27, 0.13), rim * 0.55);
-
-          // What is behind the leaf drifts a little, the way Punch's inner
-          // picture does — alive without the cut edge ever looking like it
-          // moved.
+          /* Which picture is being eaten and which is showing through swaps
+             once the top one is gone. The swap is seamless by construction:
+             an entirely eaten top layer already shows nothing but the layer
+             behind it, so at the moment of the swap the frame is identical
+             before and after — the mask resets to nothing against a new top
+             layer that is exactly what was on screen a frame earlier. */
           vec2 par = vec2(sin(uTime * 0.037) * 0.020, cos(uTime * 0.029) * 0.016)
                    * (0.6 + uLevel * 0.8);
-          vec3 innerCol = uHasTexB > 0.5 ? texB(coverUVB(uv + par)) : sky(uv, aspect);
+          vec3 pic = tex(coverUV(uv));
+          vec3 other = uHasTexB > 0.5 ? texB(coverUVB(uv + par)) : sky(uv, aspect);
+          vec3 top    = uChompFlip < 0.5 ? pic : other;
+          vec3 behind = uChompFlip < 0.5 ? other : pic;
 
-          col = mix(leafCol, innerCol, inside);
+          col = mix(top * mix(vec3(1.0), vec3(0.42, 0.27, 0.13), rim * 0.55),
+                    behind, inside);
         }
 
         col = clamp(col, 0.0, 1.0);
@@ -1632,7 +1598,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uBites','uPal','uDrops','uDropAmp','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uMask','uChompFlip','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1647,6 +1613,17 @@ const FX = {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
                   new Uint8Array([26, 26, 33, 255]));
     this.hasTex = 0;
+
+    // Chomp's damage mask. Never mipmapped and never wrapped: it is read
+    // once per pixel at exactly the screen's own uv.
+    this.maskTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([0, 0, 0, 255]));
 
     this.texB = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.texB);
@@ -1728,6 +1705,21 @@ const FX = {
     } catch (e) { this.hasTex = 0; }
   },
 
+  /* Upload Chomp's damage canvas. Called only when a mouthful has actually
+     been added, not every frame — the mask is unchanged for most frames,
+     and a full texture upload per frame for nothing is the sort of cost
+     that only shows up on the slowest device someone owns. */
+  setMask(canvas) {
+    if (!this.ok || !canvas) return;
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    } catch (e) { /* leave the previous mask up */ }
+    gl.activeTexture(gl.TEXTURE0);
+  },
+
   setSourceB(el, w, h) {
     // Clearing is handled before the ok check: a layer removed while the
     // context is lost must stay removed, or it comes back on restore.
@@ -1761,10 +1753,14 @@ const FX = {
 
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.texB);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
     gl.activeTexture(gl.TEXTURE0);
 
     gl.uniform1i(this.u.uTex, 0);
     gl.uniform1i(this.u.uTexB, 1);
+    gl.uniform1i(this.u.uMask, 2);
+    gl.uniform1f(this.u.uChompFlip, p.chompFlip || 0);
     gl.uniform1f(this.u.uTexBAspect, this.texBAspect);
     gl.uniform1f(this.u.uHasTexB, this.hasTexB);
     gl.uniform2f(this.u.uRes, this.sized[0], this.sized[1]);
@@ -1802,8 +1798,6 @@ const FX = {
     gl.uniform1f(this.u.uBar, p.bar || 0);
     gl.uniform1f(this.u.uWash, p.wash || 0);
     gl.uniform3fv(this.u.uStrike, p.strikes || new Float32Array(6));
-    gl.uniform4fv(this.u.uBites, p.bites
-      || (this._noBites || (this._noBites = new Float32Array(128))));
     gl.uniform1f(this.u.uHasTex, this.hasTex);
 
     const pal = new Float32Array(15);

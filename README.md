@@ -85,7 +85,7 @@ it: with one picture loaded they all work exactly as before.
 | Punch | layer two shows through the cut holes |
 | Dots | every dot takes its colour from layer two; the invented hues are the no-second-picture default |
 | Fields | some of the cutouts are layer two |
-| Chomp | what the bites reveal, instead of the backlit sky |
+| Chomp | what the bites reveal, instead of the backlit sky — and once the first is eaten away, the two trade places and it starts on the second |
 | Ripple | ink dropped in water — absent when quiet, arriving as a droplet, spreading and dispersing with the swell |
 | Ribbed | the two ride a conveyor behind the glass, one panel per screen width, running left |
 | Lens | circles trade pictures on a music-driven shuffle, each on its own clock, crossfaded |
@@ -114,9 +114,10 @@ it: with one picture loaded they all work exactly as before.
   Without the flat-colour shapes the whole sheet reads as one picture behind a mask.
 - **Chomp** — the media as a leaf, eaten through by the music. Two grazers walk the leaf and leave a
   mouthful behind every so often; the damage is the union of those mouthfuls, so the margin is
-  scalloped by the overlapping arcs, the trail shows which way they went, and holes only ever grow.
-  The music sets how fast they eat, not how big the holes are. No second picture reveals a soft
-  backlit sky; a second picture shows through instead.
+  scalloped by the overlapping arcs and the trail shows which way they went. **What is eaten stays
+  eaten.** When the top picture is gone the two trade places and the one that was showing through the
+  holes starts being eaten instead — seamlessly, since a fully eaten layer already shows nothing but
+  the layer behind it. With one picture the layer behind is a soft backlit sky.
 - **Punch** — a paper collage: one picture with a loose grid of hand-cut circular holes punched
   through it and a second picture showing through them. **The holes are a window onto one
   continuous photograph**, not a thumbnail repeated per circle — that is what makes it read as two
@@ -745,88 +746,85 @@ screenshot disagreed with it, because by then they had. **The test was racing th
 measuring.** Waiting on `thumbQueue.length === 0` rather than on a guessed interval makes it
 deterministic, and all ten previews were correct all along.
 
-### Chomp: damage is made by something that was somewhere, and then moved
+### Chomp: what is eaten stays eaten, which decides the architecture
 
-Chomp treats the media as a leaf and the music as something eating through it, revealing a soft
-backlit sky with no second picture or the second picture with one. Built from a photograph of
-caterpillar damage: a sprawling, branching, connected region with a deeply scalloped margin, leaf
-peninsulas jutting into it and islands left standing inside it.
+Chomp treats the media as a leaf and the music as something eating through it. Two grazers walk the
+leaf and leave a mouthful behind every so often; the damage is the union of those mouthfuls. Built
+from a photograph of caterpillar damage: a sprawling, branching, connected region with a deeply
+scalloped margin and leaf peninsulas jutting into it.
 
-**Three generations, and the first two failed for the same underlying reason.** A single
-low-frequency sum-of-sines field, thresholded, read as one curtain sliding across the frame at any
-useful coverage — a scalar field cut at a level has no notion of "several separate things". Six
-wobbly blobs on a jittered grid, growing in place with the swell, read as spots appearing. Neither
-had the one property that makes leaf damage legible, which is that **it is made by something that
-was somewhere, and then moved**. Nothing about a field or a grid encodes a path.
+**Permanence is not a setting, it is the architecture.** Three versions healed at the tail, and each
+time it looked like a parameter to tune. It was not. The damage lived in a fixed array of thirty-two
+mouthfuls in uniforms, oldest recycled, and *a ring buffer cannot represent an unbounded history* —
+the fade at the tail was the ring's edge showing through. No amount of shader tuning could have
+fixed it, because the state had nowhere to go.
 
-So the CPU walks two grazers over the leaf and deposits one disc per mouthful; the shader unions the
-discs it is handed. Three things fall out of that for free, which is why it is the right model
-rather than merely a more elaborate one:
+So the accumulated damage now lives in an offscreen canvas that is stamped into and never cleared,
+and reaches the shader as a texture. One texture holds any amount of history for a fixed cost. Three
+consequences, all of them improvements:
 
-- **The scalloped margin.** Overlapping circles meet in concave cusps, and that cusped edge *is* the
-  scallop on a chewed leaf. It is why this takes a plain `min()` and not the smooth minimum the
-  blob version used — `smin` rounds off precisely the cusps that carry the whole read, which is what
-  made those blobs look like spilled paint.
-- **Direction**, with nothing added to show it. A trail of overlapping discs points where it has been
-  going.
-- **Growth that only grows.** Discs accumulate rather than pulsing. A leaf does not un-eat, and the
-  blob version breathing with the swell was the tell.
+- Eaten is eaten. Nothing grows back, and the edge of a bite is fixed at the moment it is taken.
+- The per-bite wobble and mandible serration are baked in at stamp time, which is also the right
+  place for them: a bitten edge does not change afterwards, so it should not be recomputed per frame.
+  This is what stops the edges crawling.
+- The shader got *cheaper*, not dearer — one texture lookup replaced a thirty-two iteration loop,
+  and frame cost fell from 131ms to 100ms on the software rasterizer even including the uploads
+  (which happen only when a mouthful is actually added, not every frame).
+
+**The two pictures trade places when the top one is gone**, and the swap is invisible by
+construction rather than by crossfading: a fully eaten top layer already shows nothing but the layer
+behind it, so the frame a moment before and a moment after the swap is the same image. The mask
+resets to nothing against a new top layer that is exactly what was on screen a frame earlier. With
+one picture the layer behind is the backlit sky, and the cycle still works — the leaf is eaten away
+to sky, then the sky is eaten away to bring the picture back.
+
+**The rim is a colour, not a fade.** Each stamp draws twice, once slightly larger into the green
+channel and once actual size into red, both unioned. The difference between the channels is a band
+that hugs the outside of the current cut however many bites have merged into it — the thin browned
+tissue a real bite leaves behind.
+
+**Steering toward uneaten leaf replaced two separate rules.** The healing version needed a home
+attraction to stop grazers walking off, plus mutual avoidance to stop them eating the same patch.
+Once damage is permanent, "somewhere I have not eaten" is a real thing to steer by, and it does both
+jobs at once: a grazer is repelled by its own damage and by the other's for exactly the same reason.
+Eight candidate headings within about a right angle either side, scored by how much leaf is left a
+short way along each, with a small bonus for carrying straight on so it commits rather than dithers.
 
 The music sets how *fast* it eats, never how big the holes are — the honest mapping, since a loud
-passage should mean more leaf gone by the end of it and the damage should stay gone. Measured, that
-is 12% of the frame eaten after 50s of silence against 24% after 60s of music. A notable beat lunges
-one grazer forward by about a mouthful, the two taking turns, which is what makes a beat visible as a
-beat: you watch it take a chunk.
+passage should mean more leaf gone by the end of it and it should stay gone. A notable beat lunges
+one grazer forward by about a mouthful, the two taking turns, which is what makes a beat visible as
+a beat: you watch it take a chunk.
 
 #### Tuning a walk needs a simulator, not screenshots
 
-The path's shape was tuned in a standalone Node model of the walk (`scratchpad/pathlib.js`), scored
-on two measurements of the resulting bite cloud: the ratio of its principal axes, where 1 is a round
-patch and much above 2 is a ribbon, and how much of its own bounding box the bites cover. A browser
-screenshot round trip is forty seconds and a judgement call; the simulator is milliseconds and a
-number, and it renders the shape as text so the topology can be read directly.
+Before permanence, the path's *shape* was the whole problem, and it was tuned in a standalone Node
+model of the walk (`scratchpad/pathlib.js`) scored on the principal-axis ratio of the bite cloud —
+1 is a round patch, much above 2 is a ribbon. A browser screenshot is a forty-second round trip and
+a judgement call; the simulator is milliseconds and a number, and renders the shape as text so the
+topology can be read directly. Three plausible models each failed measurably:
 
-That mattered, because three plausible-sounding models each failed differently and the failures are
-only obvious once measured:
-
-- **Turning per second instead of per unit distance.** The first walk turned at up to 2.35 rad/s
-  while creeping at 0.05 frame-heights/s — a turning radius of 0.021 against a bite radius of 0.055,
-  so it pivoted tighter than its own mouth and chewed itself into a ball. Curvature per unit
-  travelled is also the physically right quantity: how sharply an animal turns is a property of the
-  animal, not of how fast it is going, and it makes the path trace the same shape loud or quiet.
-- **No home attraction at all.** Pure meander scored axis ratios in the thousands: both grazers walk
-  to the frame edge and the margin steering then runs them along it, piling damage into a band down
-  one side.
-- **Home attraction too tight.** Confining each grazer to a small patch and letting both converge ate
-  a scalloped *disc* with an island in the middle. A hole punch, not a caterpillar.
-
-What works is a home point that is a slow lag of the grazer's own position — a pursuit, not an anchor,
-so it folds back over its own track while the patch drifts — plus **mutual avoidance**, because two
-caterpillars on one leaf do not feed on top of each other. That last term is what turns one round
-hole into two lobes joined at a neck, which is the shape the reference photograph actually has. The
-chosen configuration measures 1.67 average axis ratio, never worse than 1.95, roughly half its
-bounding box filled, and is never once pinned against the frame edge.
+- **Turning per second instead of per unit distance.** The walk turned at up to 2.35 rad/s while
+  creeping at 0.05 frame-heights/s — a turning radius of 0.021 against a bite radius of 0.055, so it
+  pivoted tighter than its own mouth and chewed itself into a ball. Curvature per unit travelled is
+  also the physically right quantity: how sharply an animal turns is a property of the animal, not
+  of how fast it is going. That fix survives into the current version.
+- **No confinement at all.** Pure meander scored axis ratios in the *thousands*: both grazers walk to
+  the frame edge and the margin steering runs them along it, piling damage down one side.
+- **Confinement too tight.** Ate a scalloped disc with an island in the middle. A hole punch.
 
 A caution about the metric: **high fill is the wrong target on its own**, because a perfect disc
-fills 78% and a chewed leaf does not look like a hole punch. The measurement was only used to escape
-"ribbon"; choosing among the shapes that passed was done by rendering them and looking.
+fills 78% of its bounding box and a chewed leaf does not look like a hole punch. The measurement was
+only used to escape "ribbon"; choosing among the shapes that passed was done by rendering and
+looking.
 
 #### A ring buffer that ate its own live entries
 
-Bites live in a fixed ring of 32. During a loud passage the ring recycles in about eight seconds
-while a bite's lifetime is far longer, so slots were being reused **while the bite in them was still
-fully open**. Measured, that was 322 instantaneous disappearances over 1800 frames, the worst going
-from fully open to gone between one frame and the next — chunks of hole snapping shut, which reads as
-a rendering fault rather than as a leaf, and which no amount of looking at a still frame would have
-caught.
-
-The fix is that a bite closes for two independent reasons: its age, and **its position in the trail**.
-The oldest handful fade as newer ones are laid down, which guarantees a slot is shut before it can be
-reused whatever rate the music is driving. Two details matter. Rank is a whole number that steps a
-fifth of a second apart at speed, so the result is smoothed rather than used directly, or the tail
-shrinks in visible increments. And the fade reaches zero three deposits *before* the slot is actually
-reused — without that dead zone the smoothing was still being cut off partway down, leaving 7 pops of
-up to 0.31. With it, zero.
+Worth keeping even though the ring is gone, because the class of bug outlives the code. During a loud
+passage the ring recycled in about eight seconds while a bite's lifetime was far longer, so slots
+were reused **while the bite in them was still fully open**: 322 instantaneous disappearances over
+1800 frames, the worst going from fully open to gone between one frame and the next. Chunks of hole
+snapping shut — which reads as a rendering fault, and which no amount of looking at a still frame
+would have caught. It was found by logging per-frame deltas and asking how large the largest one was.
 
 Two earlier bugs from the same look, both found by isolating rather than adjusting. The browned rim
 band was set nearly as wide as the bites themselves (0.05 units against a ~0.06 radius) — not a rim
@@ -837,12 +835,6 @@ reading 160 to 251 out of 255 almost everywhere. `dot(d,d)` only reaches about 1
 of a unit-scale frame, and a coefficient of 0.9 barely dents an exponential over that range, so even
 the farthest corner came back at glow 0.31. The fix was the exponent, not the colours or the mix
 weight — **a strong glow with the wrong radius still covers everything, just more so.**
-
-Coverage answers `chompSwell`, built with the identical fast-in/slow-out/build-up shape as Fields'
-envelope, because that shape already proved out as "answers a passage, not a beat". Frame cost is
-131ms on the software rasterizer used for testing, against 156ms for Fields and 328ms for Dots;
-`MODE_SCALE` is applied at the same 0.80 ratio as Fields and for the same reason, since large
-soft-edged shapes are exactly what survives a lower internal resolution and a smoothing upscale.
 
 ### Sampler: the only thing that moves is where the colour is taken from
 
