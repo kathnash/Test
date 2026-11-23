@@ -32,7 +32,7 @@ const FX = {
   // hairline and softening that is the one thing that look cannot afford.
   MODE_SCALE: { 5: 0.68, 8: 0.80, 9: 0.80 },
 
-  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6, Dots: 7, Fields: 8, Chomp: 9 },
+  MODES: { Ripple: 0, Ribbed: 1, Marble: 2, Lens: 3, Cyanotype: 4, Blur: 5, Punch: 6, Dots: 7, Fields: 8, Chomp: 9, Seam: 10 },
 
   init(canvasEl) {
     if (this.ok) return true;
@@ -89,6 +89,10 @@ const FX = {
       // 0 = the first picture is the leaf; 1 = they have swapped, and what
       // was showing through the holes is now the thing being eaten.
       uniform float uChompFlip;
+      // Seam's horizon, in uv, and its windows: centre x, half width, top,
+      // bottom — all in uv, with a half width of zero meaning "not there".
+      uniform float uSeamY;
+      uniform vec4  uSeamRect[3];
       uniform vec3  uPal[5];
       uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
       uniform float uDropAmp[6];   // height, which is a separate question
@@ -1517,7 +1521,7 @@ const FX = {
         // behind the hole" question Punch answers, asked with an organic,
         // gnawed edge instead of a cut one.
         // ================================================================
-        else {
+        else if (uMode == 9) {
           float aspect = uRes.x / max(uRes.y, 1.0);
 
           /* The damage is a texture now, not a list of bites, and that is
@@ -1564,6 +1568,68 @@ const FX = {
                     behind, inside);
         }
 
+        // ================================================================
+        // 10 — SEAM. Two pictures divided by a flat horizon, with upright
+        // windows straddling it in which the two change places. Every edge
+        // is straight and hard: this is the one look here built out of
+        // geometry rather than out of something organic, and the contrast
+        // with the rest is the point of it.
+        // ================================================================
+        else {
+          float aspect = uRes.x / max(uRes.y, 1.0);
+
+          /* Which side of the horizon, and whether inside a window — then
+             the exclusive or of the two. That single operation is the whole
+             composition: a window above the line shows what is below it and
+             a window below shows what is above, which is what turns a
+             rectangle and a horizon into the cross in the reference.
+
+             Written as abs(a - b) on two smoothed 0..1 values rather than as
+             a branch, so it is an exclusive or where the edges are hard and
+             a clean crossfade exactly where they are not — which is the
+             antialiasing, for free, on both the horizon and every window. */
+          float aa = 1.3 / max(uRes.y, 1.0);
+          float below = smoothstep(uSeamY - aa, uSeamY + aa, uv.y);
+
+          float win = 0.0;
+          for (int i = 0; i < 3; i++) {
+            vec4 r = uSeamRect[i];
+            if (r.y <= 0.0005) continue;         // closed
+            // Horizontal edges are measured in x, so their feather has to be
+            // scaled by the aspect or it would be thinner than the
+            // horizontal ones by exactly that factor.
+            float ax = aa / max(aspect, 0.001);
+            float sx = smoothstep(r.y + ax, r.y - ax, abs(uv.x - r.x));
+            float sy = smoothstep(r.z - aa, r.z + aa, uv.y)
+                     * smoothstep(r.w + aa, r.w - aa, uv.y);
+            win = max(win, sx * sy);
+          }
+          float pickA = abs(below - win);
+
+          vec3 picA = tex(coverUV(uv));
+          /* With no second picture, the other half is the first one mirrored
+             top to bottom. That is not a filler: the reference's upper
+             picture is a reflection in water, so a vertical flip is the
+             thing it is already a picture of, and it makes a single upload
+             read as two places rather than as one picture used twice. */
+          vec3 picB = uHasTexB > 0.5 ? texB(coverUVB(uv))
+                                     : tex(coverUV(vec2(uv.x, 1.0 - uv.y)));
+
+          /* A warm and a cool cast, but only when both halves come from the
+             same upload. Two real pictures already differ; a picture against
+             its own reflection differs only in geometry, and the reference
+             gets much of its force from one half being sepia and the other
+             blue. Kept small — this is a cast, not a duotone, and a duotone
+             over a photograph reads as a filter laid on top of it rather
+             than as the picture. */
+          if (uHasTexB < 0.5) {
+            picA *= vec3(1.045, 1.000, 0.930);
+            picB *= vec3(0.945, 0.990, 1.055);
+          }
+
+          col = mix(picB, picA, pickA);
+        }
+
         col = clamp(col, 0.0, 1.0);
         gl_FragColor = vec4(col, 1.0);
       }`;
@@ -1598,7 +1664,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uMask','uChompFlip','uPal','uDrops','uDropAmp','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uMask','uChompFlip','uSeamY','uSeamRect','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1761,6 +1827,9 @@ const FX = {
     gl.uniform1i(this.u.uTexB, 1);
     gl.uniform1i(this.u.uMask, 2);
     gl.uniform1f(this.u.uChompFlip, p.chompFlip || 0);
+    gl.uniform1f(this.u.uSeamY, p.seamY == null ? 0.5 : p.seamY);
+    gl.uniform4fv(this.u.uSeamRect, p.seamRects
+      || (this._noSeam || (this._noSeam = new Float32Array(12))));
     gl.uniform1f(this.u.uTexBAspect, this.texBAspect);
     gl.uniform1f(this.u.uHasTexB, this.hasTexB);
     gl.uniform2f(this.u.uRes, this.sized[0], this.sized[1]);

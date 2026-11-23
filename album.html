@@ -216,7 +216,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v81 &middot; 21 Aug 2026</p>
+  <p class="ver" id="ver">v82 &middot; 23 Nov 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -756,6 +756,7 @@ const LOOKS = [
   { name:'Dots',   fx:'Dots'   },
   { name:'Fields', fx:'Fields' },
   { name:'Chomp',  fx:'Chomp'  },
+  { name:'Seam',   fx:'Seam'   },
   { name:'Ripple', fx:'Ripple' },
   { name:'Ribbed', fx:'Ribbed' },
   { name:'Marble', fx:'Marble', hidden:true },
@@ -1238,6 +1239,7 @@ function drawFX(cfg) {
     // envelope is. Fields wants a far slower one than the water does.
     time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : is('Chomp') ? chompSwell : is('Dots') ? dotsSwell : rippleSwell,
     strikes: strikeBuf, wash: rippleWash, chompFlip,
+    seamY, seamRects: seamBuf,
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lensShuffle, focus: blurFocus, tone: toneOf(),
@@ -1630,6 +1632,140 @@ let fieldHold = 0, fieldImm = 0, fieldSwell = 0, fieldBuild = 0;
 let chompHold = 0, chompImm = 0, chompSwell = 0, chompBuild = 0;
 
 /* =====================================================================
+   SEAM
+
+   A flat horizon between two pictures, and upright windows straddling it
+   in which the two change places. Proportions are taken off the reference
+   rather than invented: its horizon sits at exactly 0.500 of the frame,
+   and its window is 0.233 of the width by 0.425 of the height, centred,
+   straddling the line symmetrically by 0.2125 either side.
+
+   The window is measured in frame-heights rather than as a fraction of
+   the width, so it keeps the reference's 1:2.4 upright shape on any
+   screen instead of becoming a letterbox on a desktop and a column on a
+   phone. It does open up somewhat on a wide frame, because a window a
+   tenth of the width across reads as a slot rather than as a window.
+
+   This is the one look here made of straight lines, and the music is
+   answered the way a graphic composition can answer it and an organic one
+   cannot: by *cutting*. A window jumps to a new place and a new size on a
+   strong beat, instantly, with no travel in between — the same event that
+   would be wrong for a soft body is exactly right for a hard edge. The
+   slow part is the horizon, which drifts on its own clock and never stops.
+   ===================================================================== */
+const SEAM_N = 3;                      // must match uSeamRect's length in fx.js
+const seamBuf = new Float32Array(SEAM_N * 4);   // cx, halfW, yTop, yBot (uv)
+let seamY = 0.5, seamSlot = 0, lastSeamCut = -9;
+// Each window keeps where it was put and how far it drifts from there, so
+// the drift is a small wander around a placed position rather than a
+// journey. Rolled once, at the moment of the cut.
+const SEAM_WIN = [
+  { x: 0.50, w: 0.175, up: 0.213, dn: 0.213, ph: 0.0, open: 0 },
+  { x: 0.24, w: 0.120, up: 0.165, dn: 0.195, ph: 2.1, open: 0 },
+  { x: 0.76, w: 0.140, up: 0.190, dn: 0.150, ph: 4.3, open: 0 }
+];
+/* How loud it has to get before the second and third windows exist at all.
+   The first is always there, which is the reference composition exactly.
+
+   Set high on purpose. Three windows at once was the first attempt and it
+   fragmented the frame into a patchwork — the reference's whole force is
+   one large window against an otherwise undisturbed horizon, and a look
+   built from that cannot also be a mosaic. Two is the common loud case and
+   three is rare. */
+const SEAM_OPEN_AT = [0, 0.42, 0.72];
+
+function stepSeam(dt) {
+  const ar = Math.max(0.2, W / Math.max(1, H));
+
+  /* The horizon drifts, always, on two incommensurate sines and on nothing
+     else. It is the steady thing in the frame — if it answered the music as
+     well there would be nothing left holding still for the windows to cut
+     against. */
+  seamY = 0.5 + Math.sin(time * 0.041) * 0.045 + Math.sin(time * 0.027 + 1.7) * 0.030;
+
+  /* A strong beat re-places one window: new position, new size, no travel.
+     Round robin over the open ones, and rate limited — a cut on every beat
+     of a fast passage is a strobe, where one every second or two reads as
+     punctuation. */
+  if (beatNotable && time - lastSeamCut > 0.42 && musicDriveSm > 0.10) {
+    lastSeamCut = time;
+    const open = SEAM_WIN.filter((w, i) => seamWinOpen(i) > 0.5);
+    if (open.length) {
+      const win = open[seamSlot % open.length];
+      seamSlot++;
+      win.w = 0.105 + Math.random() * 0.105;   // aspect-neutral; widened at draw time
+      win.up = 0.13 + Math.random() * 0.13;
+      win.dn = 0.13 + Math.random() * 0.13;
+      win.ph = Math.random() * 6.28;
+      /* Somewhere it will not run into another open window. Overlapping
+         windows union into a stepped L, and a stepped L is not the shape
+         this look is made of — the whole language is separate upright
+         rectangles against a straight horizon. A handful of tries and then
+         whatever came out: a bounded loop, because there is no position at
+         all once the frame is full, and a look that stalls waiting for one
+         is worse than two windows touching. */
+      const half = () => win.w * seamWide(ar) * 0.5 / ar;
+      for (let n = 0; n < 12; n++) {
+        win.x = 0.18 + Math.random() * 0.64;
+        const clash = SEAM_WIN.some(o => o !== win && o.open > 0.05 &&
+          Math.abs(o.x - win.x) < (o.w * seamWide(ar) * 0.5 / ar) + half() + 0.015);
+        if (!clash) break;
+      }
+    }
+  }
+
+  for (let i = 0; i < SEAM_N; i++) {
+    const w = SEAM_WIN[i];
+    /* Opening is a width that grows from nothing rather than a window that
+       switches on. A hard-edged shape cannot be half-present, so the only
+       way to add one without it popping into existence is to let it widen
+       out of the horizon. */
+    const t = SEAM_OPEN_AT[i];
+    const want = t <= 0 ? 1 : Math.min(1, Math.max(0, (musicDriveSm - t) / 0.20));
+    w.open += (want - w.open) * (1 - Math.exp(-dt / 0.45));
+
+    // A slow sway around where it was placed, so nothing is ever quite still
+    // between cuts.
+    const cx = w.x + Math.sin(time * 0.053 + w.ph) * 0.028;
+    /* Height opens with the width rather than independently. Scaling only
+       the width meant a barely-open window was a full-height hairline
+       across the frame, which reads as a rendering fault rather than as a
+       window; growing both together makes it a small rectangle sitting on
+       the horizon, which reads as the window it will become. */
+    /* Below a few percent open a window is a speck, and a speck on a
+       photograph reads as dirt on the lens rather than as a window about to
+       exist. Shutting it off entirely at that size is imperceptible — it is
+       a handful of pixels — where leaving it in is not. */
+    const open = w.open < 0.06 ? 0 : w.open;
+    seamBuf[i * 4]     = cx;
+    seamBuf[i * 4 + 1] = w.w * seamWide(ar) * 0.5 * open / ar;
+    seamBuf[i * 4 + 2] = seamY - w.up * seamTall(ar) * open;
+    seamBuf[i * 4 + 3] = seamY + w.dn * seamTall(ar) * open;
+  }
+}
+/* A window is measured in frame-heights, so it keeps the reference's
+   upright 1:2.4 shape rather than stretching with the frame. Left at that
+   alone it is lost on a wide desktop frame — a tenth of the width across,
+   reading as a chip rather than as a window.
+
+   The widening is worked backwards from where it should land rather than
+   guessed at, because the first guess went the wrong way: a width given in
+   frame-heights is divided by the aspect to reach uv, and on a 1.73 frame
+   that division is larger than the factor that was meant to offset it, so
+   the windows came out *narrower* than before the correction. For an
+   average window to cover about 0.18 of a wide frame the factor has to
+   reach roughly 1.9, not 1.5. Height needs almost nothing, since it is
+   already a little over half the frame.
+
+   Applied here rather than when the window is placed, so a resize is
+   followed rather than frozen in at the last beat. */
+function seamWide(ar) { return 1 + Math.max(0, ar - 0.75) * 0.90; }
+function seamTall(ar) { return 1 + Math.max(0, ar - 0.75) * 0.10; }
+
+// Whether window i is open enough to be worth re-placing on a beat.
+function seamWinOpen(i) { return SEAM_WIN[i].open > 0.5 ? 1 : 0; }
+
+/* =====================================================================
    CHOMP'S GRAZERS
 
    Two of them, walking over the leaf and leaving a mouthful behind every so
@@ -1852,6 +1988,7 @@ function stepChomp(dt) {
 
   if (chompMaskDirty) { FX.setMask(chompMask); chompMaskDirty = false; }
 }
+
 // Fields' strike: where the last strong moment landed, how far through
 // its envelope it is, and how hard it hit.
 const strikeX = [0.30, 0.72], strikeY = [0.70, 0.28];
@@ -2245,6 +2382,7 @@ function frame(now) {
   // Walked every frame, not only while Chomp is showing, so switching to it
   // finds a leaf that has already been eaten into rather than a pristine one.
   stepChomp(dt);
+  stepSeam(dt);
 
   /* And a strike: the beat you actually hear, answered in one place.
 

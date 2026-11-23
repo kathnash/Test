@@ -59,12 +59,12 @@ the ordinary way, by adding new media or tapping another tile.
 every file handed to them; the OS picker dialog itself was missing the one HTML attribute
 (`multiple`) that tells it to allow more than a single selection.
 
-Eleven looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
+Twelve looks are live. Four more — **Drift**, **Swirl**, **Glitch** and **Marble** — are fully
 implemented but carry `hidden: true` in the `LOOKS` array, which keeps them out of the picker
 without deleting any code. Removing that one word brings a look back.
 
 Poster, Sampler, Swirl and Glitch paint over the artwork on a 2D canvas; Blur, Punch, Dots, Fields,
-Chomp, Ripple, Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader
+Chomp, Seam, Ripple, Ribbed, Marble, Lens and Cyanotype bend or remap it as a texture in a fragment shader
 (`fx.js`).
 
 **Tone** — Cyanotype's chemistry and Fields' ground both take a tone from the *Tone* chip: Blue
@@ -86,6 +86,7 @@ it: with one picture loaded they all work exactly as before.
 | Dots | every dot takes its colour from layer two; the invented hues are the no-second-picture default |
 | Fields | some of the cutouts are layer two |
 | Chomp | what the bites reveal, instead of the backlit sky — and once the first is eaten away, the two trade places and it starts on the second |
+| Seam | the two halves of the horizon; with one picture the lower half is its own vertical mirror |
 | Ripple | ink dropped in water — absent when quiet, arriving as a droplet, spreading and dispersing with the swell |
 | Ribbed | the two ride a conveyor behind the glass, one panel per screen width, running left |
 | Lens | circles trade pictures on a music-driven shuffle, each on its own clock, crossfaded |
@@ -118,6 +119,10 @@ it: with one picture loaded they all work exactly as before.
   eaten.** When the top picture is gone the two trade places and the one that was showing through the
   holes starts being eaten instead — seamlessly, since a fully eaten layer already shows nothing but
   the layer behind it. With one picture the layer behind is a soft backlit sky.
+- **Seam** — two pictures divided by a flat horizon, with upright windows straddling it in which the
+  two change places. The only look here built out of geometry rather than something organic, and the
+  contrast is the point of it. With one picture the lower half is that picture mirrored top to
+  bottom, which reads as a reflection in water rather than as the same photograph used twice.
 - **Punch** — a paper collage: one picture with a loose grid of hand-cut circular holes punched
   through it and a second picture showing through them. **The holes are a window onto one
   continuous photograph**, not a thumbnail repeated per circle — that is what makes it read as two
@@ -835,6 +840,63 @@ reading 160 to 251 out of 255 almost everywhere. `dot(d,d)` only reaches about 1
 of a unit-scale frame, and a coefficient of 0.9 barely dents an exponential over that range, so even
 the farthest corner came back at glow 0.31. The fix was the exponent, not the colours or the mix
 weight — **a strong glow with the wrong radius still covers everything, just more so.**
+
+### Seam: one exclusive or is the whole composition
+
+Two pictures, a flat horizon, and upright windows straddling it in which the two change places.
+Built from a reference photograph, and the proportions are measured off it rather than invented: its
+horizon sits at exactly 0.500 of the frame, and its window is 0.233 of the width by 0.425 of the
+height, centred, straddling the line symmetrically by 0.2125 either side. At the reference's own 3:4
+aspect this look reproduces those numbers exactly.
+
+**The entire composition is one operation.** Which side of the horizon a pixel is on, whether it is
+inside a window, and then the exclusive or of the two. A window above the line shows what is below
+it and a window below shows what is above — that is what turns a rectangle and a horizon into the
+cross in the reference. Written as `abs(a - b)` over two smoothed values rather than as a branch, so
+it is an exclusive or where the edges are hard and a clean crossfade exactly where they are not,
+which gives the antialiasing on both the horizon and every window for free.
+
+**With one picture the other half is that picture mirrored top to bottom.** Not filler: the
+reference's upper image is a reflection in water, so a vertical flip is the thing it is already a
+picture of, and it makes a single upload read as two places rather than as one photograph used
+twice. A warm and a cool cast are added *only* in that case — two real pictures already differ,
+where a picture against its own reflection differs only in geometry, and the reference draws much of
+its force from one half being sepia and the other blue. Kept small, because a duotone over a
+photograph reads as a filter laid on top of it rather than as the picture.
+
+**The music is answered by cutting**, which is what a hard-edged composition can do and an organic
+one cannot. A window jumps to a new place and a new size on a strong beat, instantly, with no travel
+in between — the same event that would be wrong for a soft body (Fields' blobs, where "a blob is a
+soft body and soft bodies do not accelerate") is exactly right for a straight edge. The slow part is
+the horizon, which drifts on two incommensurate sines and on nothing else: if it answered the music
+as well there would be nothing holding still for the windows to cut against.
+
+Three things had to be corrected after looking at it, and two of them are the same mistake in
+different clothes — assuming a number without checking where it lands:
+
+- **Three windows at once was a patchwork.** The reference's force is one large window against an
+  otherwise undisturbed horizon, and a look built from that cannot also be a mosaic. The thresholds
+  for the second and third went up so that one is the resting state, two the common loud case, and
+  three rare.
+- **A barely-open window was a hairline across the whole frame**, which reads as a rendering fault.
+  Height now opens with width, so a window on its way in is a small rectangle sitting on the horizon
+  rather than a full-height sliver; below a few percent it is dropped entirely, which at that size
+  is imperceptible.
+- **The first attempt at widening the window for desktop made it narrower.** A width given in
+  frame-heights is divided by the aspect to reach uv, and on a 1.73 frame that division is larger
+  than the 1.27 factor meant to offset it. Working backwards from where it should land — about 0.18
+  of a wide frame — gives a factor near 1.9, not 1.5. Measured after: 23.3% x 42.5% at the
+  reference's aspect, 28.9% x 41.7% on a phone, 19.0% x 46.7% on a desktop frame.
+
+Overlapping windows union into a stepped L, which is not a shape this look is made of, so a window
+being re-placed tries a handful of positions for one that clashes with no other open window and
+takes what it gets after that — a bounded loop, because there is no free position at all once the
+frame is full, and a look that stalls waiting for one is worse than two windows touching.
+
+It is the one shader look with no `MODE_SCALE` reduction. Everything about it is a hard edge, and a
+lower internal resolution followed by a smoothing upscale would soften exactly what it is made of.
+That costs it: 198ms on the software rasterizer against Fields' 188ms, despite being far cheaper per
+pixel — it is simply drawing 1.56 times as many of them.
 
 ### Sampler: the only thing that moves is where the colour is taken from
 
