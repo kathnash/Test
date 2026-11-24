@@ -33,8 +33,22 @@ the media, **M** opens the library, `F` toggles fullscreen.
 Two pictures was the wrong shape for how this gets used. A DJ set is ten clips, not two, and what
 you want mid-set is to reach for a different one without going back through a file picker. So the
 library holds everything and two slots say which of it is on screen: the *Media* panel lists what is
-loaded with a **1** and a **2** on each tile, and *Shuffle* re-draws both slots at random — never the
-same clip twice, and trying for a different pair than the one already showing.
+loaded with a **1** and a **2** on each tile, and *Cycle* walks them forward on its own.
+
+**The cycle waits for the music rather than landing on the clock.** An interval alone cuts wherever
+it happens to fall, which on a track with any pulse is almost always in the wrong place — a cut that
+misses the beat reads as a mistake, where the same cut a moment later on a strong beat reads as
+deliberate. So the interval only *arms* the change and the next strong beat takes it. There is a
+bound on the waiting, because a quiet passage has no strong beats and a cycle that stops dead
+whenever the music softens looks broken: past about one and a half intervals it goes anyway.
+Measured at the 5s setting against the demo tone, changes landed 5 to 8 seconds apart, the 8 being
+the fallback. Rates are off / 8s / 5s / 3s — much under three is a strobe of other people's
+photographs, much over ten reads as a still.
+
+It walks the library **in order** rather than at random. A set is something you put together, and
+someone who loaded ten clips in an order can reasonably expect to see them in it. The second slot
+follows one behind so the pair walks together, and a second slot that has been switched off stays
+off — the cycle moves what is showing, it does not decide how many pictures are showing.
 
 **Everything is scaled down on the way in**, which is the whole answer to whether a large upload
 hurts. The working copy every look samples is capped at 512px on its long edge *already*, so a
@@ -841,20 +855,37 @@ of a unit-scale frame, and a coefficient of 0.9 barely dents an exponential over
 the farthest corner came back at glow 0.31. The fix was the exponent, not the colours or the mix
 weight — **a strong glow with the wrong radius still covers everything, just more so.**
 
-### Seam: one exclusive or is the whole composition
+### Seam: fix the geometry, move the picture
 
-Two pictures, a flat horizon, and upright windows straddling it in which the two change places.
-Built from a reference photograph, and the proportions are measured off it rather than invented: its
-horizon sits at exactly 0.500 of the frame, and its window is 0.233 of the width by 0.425 of the
-height, centred, straddling the line symmetrically by 0.2125 either side. At the reference's own 3:4
-aspect this look reproduces those numbers exactly.
+Two pictures divided by a flat horizon, with one upright window straddling it in which the two
+change places. Proportions measured off the reference rather than invented: its horizon sits at
+exactly 0.500 of the frame, and its window is 0.233 of the width by 0.425 of the height, centred,
+straddling the line symmetrically by 0.2125 either side. At the reference's own 3:4 aspect this
+reproduces those numbers exactly; it adapts either side of that (28.9% x 41.7% on a phone, 19.0% x
+46.7% on a desktop frame), since a window a tenth of a wide frame across reads as a chip.
 
 **The entire composition is one operation.** Which side of the horizon a pixel is on, whether it is
-inside a window, and then the exclusive or of the two. A window above the line shows what is below
+inside the window, and then the exclusive or of the two. A window above the line shows what is below
 it and a window below shows what is above — that is what turns a rectangle and a horizon into the
 cross in the reference. Written as `abs(a - b)` over two smoothed values rather than as a branch, so
 it is an exclusive or where the edges are hard and a clean crossfade exactly where they are not,
-which gives the antialiasing on both the horizon and every window for free.
+which gives the antialiasing on the horizon and on all four sides of the window for free.
+
+**None of the geometry moves, and that is the whole design.** The first version had up to three
+windows that jumped and widened with the music; it fragmented the frame into a patchwork and the
+pulsing read as the composition twitching. One window, dead centre, fixed size, on a horizon that
+does not drift — and all the movement put into the pictures instead. Each drifts and breathes on its
+own slow path, and **the music changes the rate of that drift rather than its size**, which is the
+difference between a picture that is alive and a picture that throbs. A zoom driven straight off a
+loudness signal pulses on every beat; a zoom running along an integrated phase only ever speeds up
+and slows down, and can never jump, because its position depends on every rate it has had rather
+than on the rate it has now. The two pictures drift independently, which is what keeps the window
+edge interesting: either side of it the same two photographs sit in a different relationship from
+moment to moment, without a single edge having moved.
+
+**The zoom leads and the pan takes what is left.** At a zoom of z the visible half-extent is 0.5/z,
+so any pan beyond 0.5 - 0.5/z asks for a point outside the picture; ordering it that way is what
+keeps every sample inside the frame rather than reading the edge back.
 
 **With one picture the other half is that picture mirrored top to bottom.** Not filler: the
 reference's upper image is a reflection in water, so a vertical flip is the thing it is already a
@@ -864,39 +895,15 @@ where a picture against its own reflection differs only in geometry, and the ref
 its force from one half being sepia and the other blue. Kept small, because a duotone over a
 photograph reads as a filter laid on top of it rather than as the picture.
 
-**The music is answered by cutting**, which is what a hard-edged composition can do and an organic
-one cannot. A window jumps to a new place and a new size on a strong beat, instantly, with no travel
-in between — the same event that would be wrong for a soft body (Fields' blobs, where "a blob is a
-soft body and soft bodies do not accelerate") is exactly right for a straight edge. The slow part is
-the horizon, which drifts on two incommensurate sines and on nothing else: if it answered the music
-as well there would be nothing holding still for the windows to cut against.
-
-Three things had to be corrected after looking at it, and two of them are the same mistake in
-different clothes — assuming a number without checking where it lands:
-
-- **Three windows at once was a patchwork.** The reference's force is one large window against an
-  otherwise undisturbed horizon, and a look built from that cannot also be a mosaic. The thresholds
-  for the second and third went up so that one is the resting state, two the common loud case, and
-  three rare.
-- **A barely-open window was a hairline across the whole frame**, which reads as a rendering fault.
-  Height now opens with width, so a window on its way in is a small rectangle sitting on the horizon
-  rather than a full-height sliver; below a few percent it is dropped entirely, which at that size
-  is imperceptible.
-- **The first attempt at widening the window for desktop made it narrower.** A width given in
-  frame-heights is divided by the aspect to reach uv, and on a 1.73 frame that division is larger
-  than the 1.27 factor meant to offset it. Working backwards from where it should land — about 0.18
-  of a wide frame — gives a factor near 1.9, not 1.5. Measured after: 23.3% x 42.5% at the
-  reference's aspect, 28.9% x 41.7% on a phone, 19.0% x 46.7% on a desktop frame.
-
-Overlapping windows union into a stepped L, which is not a shape this look is made of, so a window
-being re-placed tries a handful of positions for one that clashes with no other open window and
-takes what it gets after that — a bounded loop, because there is no free position at all once the
-frame is full, and a look that stalls waiting for one is worse than two windows touching.
+Two sizing corrections worth keeping, both the same mistake — assuming a number instead of checking
+where it lands. A barely-open window used to be a full-height hairline across the frame, which reads
+as a rendering fault rather than as a window. And the first attempt at widening the window for a
+desktop frame made it *narrower*: a width given in frame-heights is divided by the aspect to reach
+uv, and on a 1.73 frame that division is larger than the 1.27 factor meant to offset it. Working
+backwards from where it should land gives a factor near 1.9, not 1.5.
 
 It is the one shader look with no `MODE_SCALE` reduction. Everything about it is a hard edge, and a
 lower internal resolution followed by a smoothing upscale would soften exactly what it is made of.
-That costs it: 198ms on the software rasterizer against Fields' 188ms, despite being far cheaper per
-pixel — it is simply drawing 1.56 times as many of them.
 
 ### Sampler: the only thing that moves is where the colour is taken from
 

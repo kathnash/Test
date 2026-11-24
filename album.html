@@ -216,7 +216,7 @@
        the one place a version number most needs to be right. Bumped by hand
        with every deploy; the build step prints it so it cannot be reported
        wrongly. -->
-  <p class="ver" id="ver">v82 &middot; 23 Nov 2026</p>
+  <p class="ver" id="ver">v83 &middot; 24 Nov 2026</p>
 </div>
 
 <div id="lib" aria-hidden="true">
@@ -228,14 +228,15 @@
     </div>
     <div class="grid" id="lib-grid"></div>
     <p class="hint">Tap <b>1</b> or <b>2</b> to put a clip on screen, tap it again to take it
-      off. Anything you add is scaled down on the way in, so a large file costs no more than
+      off. <b>Cycle</b> moves through them on its own, on the beat; <b>X</b> moves on by one.
+      Anything you add is scaled down on the way in, so a large file costs no more than
       a small one.</p>
   </div>
 </div>
 
 <div id="hud">
   <button class="chip" id="media">Media</button>
-  <button class="chip" id="shuffle">Shuffle</button>
+  <button class="chip" id="cycle">Cycle: 5s</button>
   <button class="chip" id="look">Style: Poster</button>
   <button class="chip" id="tone">Tone: Blue</button>
   <button class="chip" id="sens">Sensitivity: mid</button>
@@ -1239,7 +1240,8 @@ function drawFX(cfg) {
     // envelope is. Fields wants a far slower one than the water does.
     time, phase: ripplePhase, swell: is('Fields') ? fieldSwell : is('Chomp') ? chompSwell : is('Dots') ? dotsSwell : rippleSwell,
     strikes: strikeBuf, wash: rippleWash, chompFlip,
-    seamY, seamRects: seamBuf,
+    seamViewA, seamViewB, seamWide: seamWide(W / Math.max(1, H)),
+    seamTall: seamTall(W / Math.max(1, H)),
     lumLo: ART.lumLo, lumHi: ART.lumHi, medianNorm: ART.medianNorm,
     dev: cyanoDev, shuffle: shufflePhase, morph: morphPhase,
     lensShuffle, focus: blurFocus, tone: toneOf(),
@@ -1634,136 +1636,74 @@ let chompHold = 0, chompImm = 0, chompSwell = 0, chompBuild = 0;
 /* =====================================================================
    SEAM
 
-   A flat horizon between two pictures, and upright windows straddling it
-   in which the two change places. Proportions are taken off the reference
-   rather than invented: its horizon sits at exactly 0.500 of the frame,
-   and its window is 0.233 of the width by 0.425 of the height, centred,
-   straddling the line symmetrically by 0.2125 either side.
+   A flat horizon between two pictures, and one upright window straddling
+   it in which the two change places. Proportions are taken off the
+   reference rather than invented: its horizon sits at exactly 0.500 of
+   the frame, and its window is 0.233 of the width by 0.425 of the height,
+   centred, straddling the line symmetrically by 0.2125 either side.
 
-   The window is measured in frame-heights rather than as a fraction of
-   the width, so it keeps the reference's 1:2.4 upright shape on any
-   screen instead of becoming a letterbox on a desktop and a column on a
-   phone. It does open up somewhat on a wide frame, because a window a
-   tenth of the width across reads as a slot rather than as a window.
+   The geometry does not move. Horizon dead centre, one window dead
+   centre, fixed size — the reference composition and nothing else. An
+   earlier version had up to three windows that jumped and widened with
+   the music, and it fragmented the frame into a patchwork: the force of
+   this composition is one large window against an otherwise undisturbed
+   horizon, and a thing made of that cannot also be a mosaic.
 
-   This is the one look here made of straight lines, and the music is
-   answered the way a graphic composition can answer it and an organic one
-   cannot: by *cutting*. A window jumps to a new place and a new size on a
-   strong beat, instantly, with no travel in between — the same event that
-   would be wrong for a soft body is exactly right for a hard edge. The
-   slow part is the horizon, which drifts on its own clock and never stops.
+   So all the movement is in the pictures instead. Each drifts and
+   breathes on its own slow path, and the music changes the *rate* of that
+   drift rather than its size — which is the difference between a picture
+   that is alive and a picture that pulses. A zoom driven straight off a
+   loudness signal throbs on every beat; a zoom running along an
+   integrated phase only ever speeds up and slows down, and never jumps,
+   because the position depends on every rate it has had rather than on
+   the rate it has now.
+
+   The two pictures drift independently, which is what keeps the window
+   edge interesting: either side of it the same two photographs are in a
+   different relationship from moment to moment, without a single edge
+   having moved.
    ===================================================================== */
-const SEAM_N = 3;                      // must match uSeamRect's length in fx.js
-const seamBuf = new Float32Array(SEAM_N * 4);   // cx, halfW, yTop, yBot (uv)
-let seamY = 0.5, seamSlot = 0, lastSeamCut = -9;
-// Each window keeps where it was put and how far it drifts from there, so
-// the drift is a small wander around a placed position rather than a
-// journey. Rolled once, at the moment of the cut.
-const SEAM_WIN = [
-  { x: 0.50, w: 0.175, up: 0.213, dn: 0.213, ph: 0.0, open: 0 },
-  { x: 0.24, w: 0.120, up: 0.165, dn: 0.195, ph: 2.1, open: 0 },
-  { x: 0.76, w: 0.140, up: 0.190, dn: 0.150, ph: 4.3, open: 0 }
-];
-/* How loud it has to get before the second and third windows exist at all.
-   The first is always there, which is the reference composition exactly.
+const seamViewA = new Float32Array(4);   // pan x, pan y, zoom, unused
+const seamViewB = new Float32Array(4);
+let seamPhase = 0;
 
-   Set high on purpose. Three windows at once was the first attempt and it
-   fragmented the frame into a patchwork — the reference's whole force is
-   one large window against an otherwise undisturbed horizon, and a look
-   built from that cannot also be a mosaic. Two is the common loud case and
-   three is rare. */
-const SEAM_OPEN_AT = [0, 0.42, 0.72];
-
-function stepSeam(dt) {
-  const ar = Math.max(0.2, W / Math.max(1, H));
-
-  /* The horizon drifts, always, on two incommensurate sines and on nothing
-     else. It is the steady thing in the frame — if it answered the music as
-     well there would be nothing left holding still for the windows to cut
-     against. */
-  seamY = 0.5 + Math.sin(time * 0.041) * 0.045 + Math.sin(time * 0.027 + 1.7) * 0.030;
-
-  /* A strong beat re-places one window: new position, new size, no travel.
-     Round robin over the open ones, and rate limited — a cut on every beat
-     of a fast passage is a strobe, where one every second or two reads as
-     punctuation. */
-  if (beatNotable && time - lastSeamCut > 0.42 && musicDriveSm > 0.10) {
-    lastSeamCut = time;
-    const open = SEAM_WIN.filter((w, i) => seamWinOpen(i) > 0.5);
-    if (open.length) {
-      const win = open[seamSlot % open.length];
-      seamSlot++;
-      win.w = 0.105 + Math.random() * 0.105;   // aspect-neutral; widened at draw time
-      win.up = 0.13 + Math.random() * 0.13;
-      win.dn = 0.13 + Math.random() * 0.13;
-      win.ph = Math.random() * 6.28;
-      /* Somewhere it will not run into another open window. Overlapping
-         windows union into a stepped L, and a stepped L is not the shape
-         this look is made of — the whole language is separate upright
-         rectangles against a straight horizon. A handful of tries and then
-         whatever came out: a bounded loop, because there is no position at
-         all once the frame is full, and a look that stalls waiting for one
-         is worse than two windows touching. */
-      const half = () => win.w * seamWide(ar) * 0.5 / ar;
-      for (let n = 0; n < 12; n++) {
-        win.x = 0.18 + Math.random() * 0.64;
-        const clash = SEAM_WIN.some(o => o !== win && o.open > 0.05 &&
-          Math.abs(o.x - win.x) < (o.w * seamWide(ar) * 0.5 / ar) + half() + 0.015);
-        if (!clash) break;
-      }
-    }
-  }
-
-  for (let i = 0; i < SEAM_N; i++) {
-    const w = SEAM_WIN[i];
-    /* Opening is a width that grows from nothing rather than a window that
-       switches on. A hard-edged shape cannot be half-present, so the only
-       way to add one without it popping into existence is to let it widen
-       out of the horizon. */
-    const t = SEAM_OPEN_AT[i];
-    const want = t <= 0 ? 1 : Math.min(1, Math.max(0, (musicDriveSm - t) / 0.20));
-    w.open += (want - w.open) * (1 - Math.exp(-dt / 0.45));
-
-    // A slow sway around where it was placed, so nothing is ever quite still
-    // between cuts.
-    const cx = w.x + Math.sin(time * 0.053 + w.ph) * 0.028;
-    /* Height opens with the width rather than independently. Scaling only
-       the width meant a barely-open window was a full-height hairline
-       across the frame, which reads as a rendering fault rather than as a
-       window; growing both together makes it a small rectangle sitting on
-       the horizon, which reads as the window it will become. */
-    /* Below a few percent open a window is a speck, and a speck on a
-       photograph reads as dirt on the lens rather than as a window about to
-       exist. Shutting it off entirely at that size is imperceptible — it is
-       a handful of pixels — where leaving it in is not. */
-    const open = w.open < 0.06 ? 0 : w.open;
-    seamBuf[i * 4]     = cx;
-    seamBuf[i * 4 + 1] = w.w * seamWide(ar) * 0.5 * open / ar;
-    seamBuf[i * 4 + 2] = seamY - w.up * seamTall(ar) * open;
-    seamBuf[i * 4 + 3] = seamY + w.dn * seamTall(ar) * open;
-  }
-}
-/* A window is measured in frame-heights, so it keeps the reference's
-   upright 1:2.4 shape rather than stretching with the frame. Left at that
-   alone it is lost on a wide desktop frame — a tenth of the width across,
-   reading as a chip rather than as a window.
-
-   The widening is worked backwards from where it should land rather than
-   guessed at, because the first guess went the wrong way: a width given in
-   frame-heights is divided by the aspect to reach uv, and on a 1.73 frame
-   that division is larger than the factor that was meant to offset it, so
-   the windows came out *narrower* than before the correction. For an
-   average window to cover about 0.18 of a wide frame the factor has to
-   reach roughly 1.9, not 1.5. Height needs almost nothing, since it is
-   already a little over half the frame.
-
-   Applied here rather than when the window is placed, so a resize is
-   followed rather than frozen in at the last beat. */
+// The window is measured in frame-heights so it keeps the reference's
+// upright shape rather than stretching with the frame, and opens up
+// somewhat on a wide one, where a tenth of the width across reads as a
+// chip rather than as a window. Worked backwards from where it should
+// land: a width in frame-heights is divided by the aspect to reach uv, and
+// on a 1.73 frame that division is larger than a naive factor meant to
+// offset it — for an average window to cover about 0.18 of a wide frame
+// the factor has to reach roughly 1.9.
 function seamWide(ar) { return 1 + Math.max(0, ar - 0.75) * 0.90; }
 function seamTall(ar) { return 1 + Math.max(0, ar - 0.75) * 0.10; }
 
-// Whether window i is open enough to be worth re-placing on a beat.
-function seamWinOpen(i) { return SEAM_WIN[i].open > 0.5 ? 1 : 0; }
+/* One view: where the picture is looking, and how close in.
+
+   The zoom leads, and the pan is then allowed only the room the zoom has
+   actually left over. That ordering is what keeps every sample inside the
+   picture — at a zoom of z the visible half-extent is 0.5/z, so anything
+   beyond 0.5 - 0.5/z of pan would be asking for a point that is not there,
+   and the look would be reading its own edge pixels back. */
+function seamView(out, ph, seed, amp) {
+  const zoom = 1.22 + Math.sin(ph * 0.41 + seed) * 0.15;
+  const room = Math.max(0, 0.5 - 0.5 / zoom) * 0.92;
+  out[0] = Math.sin(ph * 1.00 + seed * 1.7) * room * amp;
+  out[1] = Math.sin(ph * 0.73 + seed * 2.9) * room * amp;
+  out[2] = zoom;
+}
+
+function stepSeam(dt) {
+  /* Integrated, never time multiplied by a rate. The music sets how fast
+     the pictures drift and nothing else — no term here can displace them,
+     so a loud passage speeds the drift up where a louder one would
+     otherwise have thrown both pictures to a different framing. */
+  seamPhase += dt * (0.030 + musicDriveSm * 0.115);
+  seamView(seamViewA, seamPhase, 0.0, 1.00);
+  // The second picture drifts a little less, so the pair reads as one
+  // scene with depth in it rather than as two slideshows.
+  seamView(seamViewB, seamPhase * 0.84 + 2.3, 1.9, 0.82);
+}
 
 /* =====================================================================
    CHOMP'S GRAZERS
@@ -2383,6 +2323,7 @@ function frame(now) {
   // finds a leaf that has already been eaten into rather than a pristine one.
   stepChomp(dt);
   stepSeam(dt);
+  stepCycle(dt);
 
   /* And a strike: the beat you actually hear, answered in one place.
 
@@ -2549,7 +2490,7 @@ toneEl.onclick = () => { tone = (tone + 1) % TONES.length; paintTone(); };
    Two pictures were the wrong shape for how this gets used. A set is ten
    clips, not two, and what you want mid-set is to reach for a different one
    without going back through a file picker. So the library holds everything
-   and two slots say which of it is on screen; Shuffle re-draws those slots.
+   and two slots say which of it is on screen; the cycle walks them forward.
 
    Every import is scaled down on the way in, which is the whole answer to
    whether a large upload hurts. The working copy every look actually samples
@@ -2652,17 +2593,49 @@ function removeMedia(i) {
   applySlots();
 }
 
-function shuffleMedia() {
-  if (MEDIA.length < 2) { flash('Add more media to shuffle.'); return; }
-  const pick = () => Math.floor(Math.random() * MEDIA.length);
-  let a = pick(), b = pick();
-  // Try for a different pair than the one showing, and a different clip in
-  // each slot. A handful of attempts rather than a loop with no bound.
-  for (let n = 0; n < 24 && (a === b || (a === slotA && b === slotB)); n++) {
-    a = pick(); b = pick();
-  }
-  slotA = a; slotB = MEDIA.length > 1 ? b : -1;
+/* Walk the library forward by one. In order rather than at random: a set
+   is something you put together, and a DJ who loaded ten clips in an order
+   can reasonably expect to see them in it. The second slot follows one
+   behind, so the pair walks the library as a pair.
+
+   If the second slot has been switched off, it stays off — the cycle moves
+   what is showing, it does not decide how many pictures are showing. */
+function advanceMedia(quiet) {
+  const n = MEDIA.length;
+  if (n < 2) { if (!quiet) flash('Add more media to cycle.'); return; }
+  slotA = (slotA + 1 + n) % n;
+  if (slotB >= 0) slotB = (slotA + 1) % n;
   applySlots();
+}
+
+/* How often it moves on, in seconds, and off. The rates are a few seconds
+   apart because that is the range the change stays interesting in: much
+   under three and it is a strobe of other people's photographs, much over
+   ten and it reads as a still. */
+const CYCLE_SECS = [0, 8, 5, 3];
+const CYCLE_NAME = ['Cycle: off', 'Cycle: 8s', 'Cycle: 5s', 'Cycle: 3s'];
+let cycleIdx = 2, cycleClock = 0;
+
+/* The change waits for the music rather than landing on the clock.
+
+   An interval alone cuts wherever it happens to fall, which on a track with
+   any pulse to it is almost always in the wrong place — the eye reads a cut
+   that misses the beat as a mistake, where the same cut a moment later on a
+   strong beat reads as deliberate. So the interval only arms the change,
+   and the next strong beat takes it.
+
+   With a bound on the waiting, because a quiet passage has no strong beats
+   and a cycle that stops dead whenever the music goes soft is a cycle that
+   looks broken. Past about one and a half intervals it goes anyway. */
+function stepCycle(dt) {
+  const secs = CYCLE_SECS[cycleIdx];
+  if (!secs || MEDIA.length < 2) { cycleClock = 0; return; }
+  cycleClock += dt;
+  if (cycleClock < secs) return;
+  if (beatNotable || cycleClock >= secs * 1.6) {
+    cycleClock = 0;
+    advanceMedia(true);
+  }
 }
 
 function paintLibrary() {
@@ -2714,7 +2687,11 @@ document.getElementById('lib-close').onclick = () => {
   libEl.setAttribute('aria-hidden', 'true');
 };
 libEl.onclick = e => { if (e.target === libEl) document.getElementById('lib-close').click(); };
-document.getElementById('shuffle').onclick = shuffleMedia;
+document.getElementById('cycle').onclick = e => {
+  cycleIdx = (cycleIdx + 1) % CYCLE_SECS.length;
+  cycleClock = 0;
+  e.target.textContent = CYCLE_NAME[cycleIdx];
+};
 
 fileInput.onchange = () => {
   // Several at once, because loading a set one file at a time is the thing
@@ -3142,9 +3119,10 @@ addEventListener('keydown', e => {
     setLookIndex(n);
   }
   if (e.key.toLowerCase() === 'f') document.getElementById('full').click();
-  // X shuffles the library. Space already cycles the looks, and X is next to
-  // it, unshifted on every layout, and not claimed by the browser.
-  if (e.key.toLowerCase() === 'x') shuffleMedia();
+  // X moves the library on by one, whatever the cycle is set to. Space
+  // already steps the looks, and X is next to it, unshifted on every
+  // layout, and not claimed by the browser.
+  if (e.key.toLowerCase() === 'x') advanceMedia();
   if (e.key.toLowerCase() === 'm') document.getElementById('media').click();
   if (e.key.toLowerCase() === 'g') openStyles();
   if (e.key === 'Escape') { closeStyles(); document.getElementById('lib-close').click(); }
@@ -3160,7 +3138,7 @@ addEventListener('keydown', e => {
   resize();
   setLookIndex(look);
   // The picture the page opens on is the library's first entry, so the panel
-  // is never empty and Shuffle has something to work with from the start.
+  // is never empty and the cycle has something to work with from the start.
   try { addMedia(await sampleArtwork(), false, ''); }
   catch (e) { /* visuals still run */ }
   requestAnimationFrame(frame);

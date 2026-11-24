@@ -89,10 +89,12 @@ const FX = {
       // 0 = the first picture is the leaf; 1 = they have swapped, and what
       // was showing through the holes is now the thing being eaten.
       uniform float uChompFlip;
-      // Seam's horizon, in uv, and its windows: centre x, half width, top,
-      // bottom — all in uv, with a half width of zero meaning "not there".
-      uniform float uSeamY;
-      uniform vec4  uSeamRect[3];
+      /* Seam's two views: pan x, pan y, zoom. Nothing about its geometry
+         is passed, because none of it varies — the horizon is the middle
+         of the frame and the window is one fixed rectangle on it. */
+      uniform vec4  uSeamA;
+      uniform vec4  uSeamB;
+      uniform float uSeamWide, uSeamTall;
       uniform vec3  uPal[5];
       uniform vec4  uDrops[6];     // x, y (uv), age(sec), size (0 = empty)
       uniform float uDropAmp[6];   // height, which is a separate question
@@ -1578,42 +1580,44 @@ const FX = {
         else {
           float aspect = uRes.x / max(uRes.y, 1.0);
 
-          /* Which side of the horizon, and whether inside a window — then
+          /* The reference exactly: horizon at the middle of the frame, one
+             window centred on it, 0.175 frame-heights wide and straddling
+             the line by 0.2125 either way. All of it fixed — the movement
+             in this look is in the pictures, not in the geometry. */
+          float halfW = 0.175 * uSeamWide * 0.5 / aspect;
+          float halfH = 0.2125 * uSeamTall;
+
+          /* Which side of the horizon, whether inside the window, and then
              the exclusive or of the two. That single operation is the whole
              composition: a window above the line shows what is below it and
              a window below shows what is above, which is what turns a
              rectangle and a horizon into the cross in the reference.
 
-             Written as abs(a - b) on two smoothed 0..1 values rather than as
-             a branch, so it is an exclusive or where the edges are hard and
-             a clean crossfade exactly where they are not — which is the
-             antialiasing, for free, on both the horizon and every window. */
+             Written as abs(a - b) on two smoothed 0..1 values rather than
+             as a branch, so it is an exclusive or where the edges are hard
+             and a clean crossfade exactly where they are not — which is the
+             antialiasing, for free, on the horizon and on all four sides of
+             the window. */
           float aa = 1.3 / max(uRes.y, 1.0);
-          float below = smoothstep(uSeamY - aa, uSeamY + aa, uv.y);
-
-          float win = 0.0;
-          for (int i = 0; i < 3; i++) {
-            vec4 r = uSeamRect[i];
-            if (r.y <= 0.0005) continue;         // closed
-            // Horizontal edges are measured in x, so their feather has to be
-            // scaled by the aspect or it would be thinner than the
-            // horizontal ones by exactly that factor.
-            float ax = aa / max(aspect, 0.001);
-            float sx = smoothstep(r.y + ax, r.y - ax, abs(uv.x - r.x));
-            float sy = smoothstep(r.z - aa, r.z + aa, uv.y)
-                     * smoothstep(r.w + aa, r.w - aa, uv.y);
-            win = max(win, sx * sy);
-          }
+          float ax = aa / max(aspect, 0.001);
+          float below = smoothstep(0.5 - aa, 0.5 + aa, uv.y);
+          float win = smoothstep(halfW + ax, halfW - ax, abs(uv.x - 0.5))
+                    * smoothstep(0.5 - halfH - aa, 0.5 - halfH + aa, uv.y)
+                    * smoothstep(0.5 + halfH + aa, 0.5 + halfH - aa, uv.y);
           float pickA = abs(below - win);
 
-          vec3 picA = tex(coverUV(uv));
+          // Each picture is looked at through its own slowly drifting view.
+          vec2 qa = (uv - 0.5) / uSeamA.z + 0.5 + uSeamA.xy;
+          vec3 picA = tex(coverUV(qa));
+
           /* With no second picture, the other half is the first one mirrored
-             top to bottom. That is not a filler: the reference's upper
-             picture is a reflection in water, so a vertical flip is the
-             thing it is already a picture of, and it makes a single upload
-             read as two places rather than as one picture used twice. */
-          vec3 picB = uHasTexB > 0.5 ? texB(coverUVB(uv))
-                                     : tex(coverUV(vec2(uv.x, 1.0 - uv.y)));
+             top to bottom. That is not filler: the reference's upper picture
+             is a reflection in water, so a vertical flip is the thing it is
+             already a picture of, and it makes a single upload read as two
+             places rather than as one picture used twice. */
+          vec2 fb = uHasTexB > 0.5 ? uv : vec2(uv.x, 1.0 - uv.y);
+          vec2 qb = (fb - 0.5) / uSeamB.z + 0.5 + uSeamB.xy;
+          vec3 picB = uHasTexB > 0.5 ? texB(coverUVB(qb)) : tex(coverUV(qb));
 
           /* A warm and a cool cast, but only when both halves come from the
              same upload. Two real pictures already differ; a picture against
@@ -1664,7 +1668,7 @@ const FX = {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
     for (const n of ['uTex','uRes','uTexAspect','uTime','uPhase','uSwell','uLumLo','uLumHi','uMedNorm','uLumLoB','uLumHiB','uMedNormB','uDev','uShuffle','uMorph','uLensShuf','uFocus','uTPaper','uTLight','uTMid','uTDeep','uCPale','uCMid','uCDeep','uFieldBg','uMode','uTexB','uTexBAspect','uHasTexB','uBass','uMid',
-                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uMask','uChompFlip','uSeamY','uSeamRect','uPal','uDrops','uDropAmp','uHasTex']) {
+                     'uHigh','uLevel','uBeat','uPulse','uBar','uWash','uStrike','uMask','uChompFlip','uSeamA','uSeamB','uSeamWide','uSeamTall','uPal','uDrops','uDropAmp','uHasTex']) {
       this.u[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -1827,9 +1831,11 @@ const FX = {
     gl.uniform1i(this.u.uTexB, 1);
     gl.uniform1i(this.u.uMask, 2);
     gl.uniform1f(this.u.uChompFlip, p.chompFlip || 0);
-    gl.uniform1f(this.u.uSeamY, p.seamY == null ? 0.5 : p.seamY);
-    gl.uniform4fv(this.u.uSeamRect, p.seamRects
-      || (this._noSeam || (this._noSeam = new Float32Array(12))));
+    const zeroV = this._zeroV || (this._zeroV = new Float32Array(4));
+    gl.uniform4fv(this.u.uSeamA, p.seamViewA || zeroV);
+    gl.uniform4fv(this.u.uSeamB, p.seamViewB || zeroV);
+    gl.uniform1f(this.u.uSeamWide, p.seamWide == null ? 1 : p.seamWide);
+    gl.uniform1f(this.u.uSeamTall, p.seamTall == null ? 1 : p.seamTall);
     gl.uniform1f(this.u.uTexBAspect, this.texBAspect);
     gl.uniform1f(this.u.uHasTexB, this.hasTexB);
     gl.uniform2f(this.u.uRes, this.sized[0], this.sized[1]);
